@@ -28,6 +28,9 @@ final class UpdaterGuard {
 
 	public const OPTION_FAILURES = 'pattonwebz_signed_releases_failures';
 
+	/** Highest signed version verified per slug — the downgrade ratchet. */
+	public const OPTION_SEEN = 'pattonwebz_signed_releases_seen';
+
 	/** Plugin basename, e.g. "my-plugin/my-plugin.php". */
 	private string $pluginFile;
 
@@ -36,6 +39,9 @@ final class UpdaterGuard {
 	private string $storeUrl;
 
 	private ?int $itemId;
+
+	/** Currently installed plugin version, when the integration supplies it. */
+	private ?string $currentVersion;
 
 	private MinisignVerifier $verifier;
 
@@ -60,6 +66,7 @@ final class UpdaterGuard {
 	 *     @type string   $store_url        Required. EDD store URL.
 	 *     @type string[] $public_keys      Required. minisign.pub file contents (or bare base64 lines).
 	 *     @type int      $item_id          Optional. EDD download ID, passed to the signature endpoint.
+	 *     @type string   $current_version  Optional. Installed plugin version; used as a downgrade floor.
 	 *     @type string   $mode             Optional. off|log|enforce. Default log.
 	 *     @type callable $downloader        Optional. Test/DI override.
 	 *     @type callable $signature_fetcher Optional. Test/DI override.
@@ -78,6 +85,9 @@ final class UpdaterGuard {
 		$this->slug       = $args['slug'];
 		$this->storeUrl   = $args['store_url'];
 		$this->itemId     = isset( $args['item_id'] ) ? (int) $args['item_id'] : null;
+
+		$current              = $args['current_version'] ?? null;
+		$this->currentVersion = ( is_string( $current ) && '' !== $current ) ? $current : null;
 
 		$keys = array();
 		foreach ( (array) $args['public_keys'] as $key_text ) {
@@ -123,27 +133,38 @@ final class UpdaterGuard {
 	 * @return mixed false (not ours), string verified file path, or \WP_Error.
 	 */
 	public function interceptDownload( $reply, $package, $upgrader = null, $hook_extra = array() ) {
-		if ( false !== $reply ) {
-			return $reply;
-		}
-
 		// The mode can be adjusted at runtime — the kill switch if a signing
 		// mishap ever blocks legitimate updates before a fix ships.
 		$mode   = apply_filters( 'pattonwebz_signed_releases_mode', $this->policy->mode(), $this->slug );
 		$policy = new VerificationPolicy( $mode );
 
-		if ( $policy->isOff() ) {
-			return false;
+		// Not our plugin (or verification disabled): never disturb another
+		// callback's reply.
+		if ( $policy->isOff()
+			|| ! is_array( $hook_extra )
+			|| ( $hook_extra['plugin'] ?? null ) !== $this->pluginFile ) {
+			return $reply;
 		}
 
-		if ( ! is_array( $hook_extra ) || ( $hook_extra['plugin'] ?? null ) !== $this->pluginFile ) {
-			return false;
-		}
+		// $reply may already be a file from an earlier upgrader_pre_download
+		// callback. Verify THAT file rather than trusting it — otherwise a
+		// mirror/cache (or a malicious) plugin hooking at the same priority
+		// could slip an unverified package past enforcement. Only a false
+		// reply means "download it yourself".
+		$downloaded = false;
 
-		$file = call_user_func( $this->downloader, $package );
+		if ( false !== $reply ) {
+			if ( ! is_string( $reply ) || '' === $reply ) {
+				return $reply; // WP_Error or unexpected type — pass through.
+			}
+			$file = $reply;
+		} else {
+			$file = call_user_func( $this->downloader, $package );
 
-		if ( ! is_string( $file ) ) {
-			return $file; // WP_Error from the download itself.
+			if ( ! is_string( $file ) ) {
+				return $file; // WP_Error from our own download.
+			}
+			$downloaded = true;
 		}
 
 		$update   = call_user_func( $this->updateResolver );
@@ -154,11 +175,20 @@ final class UpdaterGuard {
 
 			$signature = Signature::fromMinisigText( $minisig_text );
 			$comment   = $this->verifier->verifyFile( $file, $signature );
-			$comment->assertMatches( $this->slug, $expected );
+
+			// Bind the authenticated slug to our configured slug (cross-plugin
+			// replay defense). Slug only here — version is handled below off
+			// the authenticated comment, not the store-supplied $expected.
+			$comment->assertMatches( $this->slug, null );
+
+			$signed_version = $comment->get( 'version' );
+			$this->assertSignedVersionAcceptable( $signed_version, $expected );
 		} catch ( VerificationException $e ) {
-			return $this->handleFailure( $e, $policy, $package, $file );
+			return $this->handleFailure( $e, $policy, $package, $file, $downloaded );
 		}
 
+		// Advance the downgrade ratchet only on a fully accepted release.
+		$this->recordSeenVersion( (string) $signed_version );
 		$this->clearFailures();
 
 		/**
@@ -196,9 +226,99 @@ final class UpdaterGuard {
 	}
 
 	/**
-	 * @return string|\WP_Error The downloaded file (log mode) or an error (enforce mode).
+	 * Enforce version binding off the *authenticated* signed version:
+	 *  - it must be present (a signature with no version can't be bound);
+	 *  - if the store also told us a version, the two must agree;
+	 *  - it must not be older than the highest version this site has already
+	 *    verified, nor older than the installed version — the downgrade
+	 *    ratchet that stops a compromised store rolling a site back to an
+	 *    older, still-validly-signed (and possibly vulnerable) release.
+	 *
+	 * @param string|null $signed_version From the authenticated trusted comment.
+	 * @param string|null $expected       Store-supplied new_version, if any.
+	 *
+	 * @throws VerificationException When the version is missing, disagrees, or is a downgrade.
 	 */
-	private function handleFailure( VerificationException $e, VerificationPolicy $policy, string $package, string $file ) {
+	private function assertSignedVersionAcceptable( ?string $signed_version, ?string $expected ): void {
+		if ( null === $signed_version || '' === $signed_version ) {
+			throw VerificationException::withCode(
+				VerificationException::MISSING_VERSION,
+				'Signature does not specify a version; cannot bind the release.'
+			);
+		}
+
+		if ( null !== $expected && '' !== $expected && $signed_version !== $expected ) {
+			throw VerificationException::withCode(
+				VerificationException::COMMENT_MISMATCH,
+				sprintf(
+					'Signed version "%s" does not match the offered version "%s".',
+					$signed_version,
+					$expected
+				)
+			);
+		}
+
+		$floor = $this->downgradeFloor();
+
+		if ( null !== $floor && version_compare( $signed_version, $floor, '<' ) ) {
+			throw VerificationException::withCode(
+				VerificationException::DOWNGRADE,
+				sprintf(
+					'Refusing downgrade: signed version "%s" is older than "%s".',
+					$signed_version,
+					$floor
+				)
+			);
+		}
+	}
+
+	/**
+	 * The highest of the installed version and the ratchet high-water mark.
+	 */
+	private function downgradeFloor(): ?string {
+		$floor = $this->highWaterVersion();
+
+		if ( null !== $this->currentVersion
+			&& ( null === $floor || version_compare( $this->currentVersion, $floor, '>' ) ) ) {
+			$floor = $this->currentVersion;
+		}
+
+		return $floor;
+	}
+
+	private function highWaterVersion(): ?string {
+		if ( ! function_exists( 'get_option' ) ) {
+			return null;
+		}
+
+		$seen = get_option( self::OPTION_SEEN, array() );
+
+		return isset( $seen[ $this->slug ] ) && is_string( $seen[ $this->slug ] )
+			? $seen[ $this->slug ]
+			: null;
+	}
+
+	private function recordSeenVersion( string $version ): void {
+		if ( '' === $version || ! function_exists( 'update_option' ) ) {
+			return;
+		}
+
+		$seen    = get_option( self::OPTION_SEEN, array() );
+		$current = ( isset( $seen[ $this->slug ] ) && is_string( $seen[ $this->slug ] ) ) ? $seen[ $this->slug ] : null;
+
+		if ( null === $current || version_compare( $version, $current, '>' ) ) {
+			$seen[ $this->slug ] = $version;
+			update_option( self::OPTION_SEEN, $seen, false );
+		}
+	}
+
+	/**
+	 * @param string $file  Path to the package under inspection.
+	 * @param bool   $owned Whether we downloaded $file (and may delete it).
+	 *
+	 * @return string|\WP_Error The package path (log mode) or an error (enforce mode).
+	 */
+	private function handleFailure( VerificationException $e, VerificationPolicy $policy, string $package, string $file, bool $owned ) {
 		if ( $policy->shouldLog() ) {
 			call_user_func(
 				$this->logger,
@@ -229,7 +349,11 @@ final class UpdaterGuard {
 			return $file; // Log-only rollout phase: allow the install.
 		}
 
-		@unlink( $file );
+		// Only remove a file we downloaded ourselves; a path handed to us by
+		// another callback is not ours to delete.
+		if ( $owned ) {
+			@unlink( $file );
+		}
 
 		return new \WP_Error(
 			'signed_releases_verification_failed',

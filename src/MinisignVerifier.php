@@ -42,6 +42,7 @@ class MinisignVerifier {
 	 * @throws VerificationException On any parse or verification failure.
 	 */
 	public function verifyFile( string $file_path, Signature $signature ): TrustedComment {
+		$this->assertCryptoAvailable();
 		$key = $this->trustedKeyFor( $signature );
 
 		if ( Signature::ALG_PREHASHED === $signature->algorithm() ) {
@@ -61,6 +62,7 @@ class MinisignVerifier {
 	 * Verify in-memory data against a signature.
 	 */
 	public function verifyString( string $data, Signature $signature ): TrustedComment {
+		$this->assertCryptoAvailable();
 		$key = $this->trustedKeyFor( $signature );
 
 		if ( Signature::ALG_PREHASHED === $signature->algorithm() ) {
@@ -70,6 +72,22 @@ class MinisignVerifier {
 		}
 
 		return $this->verifyMessage( $data, $signature, $key );
+	}
+
+	/**
+	 * Fail closed if libsodium isn't available at runtime. WordPress >= 5.2
+	 * provides these functions natively (ext-sodium) or via the bundled
+	 * sodium_compat polyfill; if neither is present we must raise a catchable
+	 * exception rather than fatal on an undefined-function call.
+	 */
+	private function assertCryptoAvailable(): void {
+		if ( ! function_exists( 'sodium_crypto_sign_verify_detached' )
+			|| ! function_exists( 'sodium_crypto_generichash_init' ) ) {
+			throw VerificationException::withCode(
+				VerificationException::CRYPTO_UNAVAILABLE,
+				'libsodium is unavailable; cannot verify release signatures.'
+			);
+		}
 	}
 
 	private function trustedKeyFor( Signature $signature ): PublicKey {

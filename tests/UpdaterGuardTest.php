@@ -37,6 +37,10 @@ final class UpdaterGuardTest extends TestCase {
 		return PATTONWEBZ_TEST_FIXTURES . '/' . $name;
 	}
 
+	private function noVersionSignature(): string {
+		return file_get_contents( $this->fixture( 'no-version.minisig' ) );
+	}
+
 	/**
 	 * A downloader that "downloads" a fixture into a temp file, like
 	 * download_url() would.
@@ -103,19 +107,56 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertFalse( $this->intercept( $guard, array() ) );
 	}
 
-	public function testPassesThroughExistingReply(): void {
+	public function testWpErrorReplyPassesThrough(): void {
 		$guard = $this->makeGuard();
+		$error = new \WP_Error( 'download_failed', 'nope' );
 
 		$this->assertSame(
-			'/already/handled.zip',
-			$guard->interceptDownload( '/already/handled.zip', self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) )
+			$error,
+			$guard->interceptDownload( $error, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) )
 		);
 	}
 
-	public function testOffModeDoesNothing(): void {
+	public function testVerifiesAFileSuppliedByAnEarlierCallback(): void {
+		// Another upgrader_pre_download callback already produced a file path.
+		// We must verify THAT file, not blindly trust it.
+		$tmp = tempnam( sys_get_temp_dir(), 'sig-test-' );
+		copy( $this->fixture( 'sample-plugin-1.2.3.zip' ), $tmp );
+		$this->tempFiles[] = $tmp;
+
+		$guard = $this->makeGuard(
+			array(
+				'downloader' => static function (): string {
+					throw new \LogicException( 'Must not download when a reply file is supplied.' );
+				},
+			)
+		);
+
+		$result = $guard->interceptDownload( $tmp, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
+
+		$this->assertSame( $tmp, $result );
+		$this->assertContains( 'pattonwebz_signed_releases_verified', $this->firedActions() );
+	}
+
+	public function testBlocksAnUnverifiableFileSuppliedByAnEarlierCallback(): void {
+		// A mirror/cache (or malicious) plugin slips in a tampered file.
+		$tmp = tempnam( sys_get_temp_dir(), 'sig-test-' );
+		copy( $this->fixture( 'sample-plugin-1.2.3.tampered.zip' ), $tmp );
+		$this->tempFiles[] = $tmp;
+
+		$guard  = $this->makeGuard();
+		$result = $guard->interceptDownload( $tmp, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		// We must not delete a file another callback owns.
+		$this->assertFileExists( $tmp );
+	}
+
+	public function testOffModeReturnsReplyUntouched(): void {
 		$guard = $this->makeGuard( array( 'mode' => VerificationPolicy::MODE_OFF ) );
 
 		$this->assertFalse( $this->intercept( $guard ) );
+		$this->assertSame( 'x', $guard->interceptDownload( 'x', self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) ) );
 	}
 
 	public function testModeFilterActsAsKillSwitch(): void {
@@ -217,6 +258,81 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertInstanceOf( \WP_Error::class, $result );
 		$failures = get_option( UpdaterGuard::OPTION_FAILURES );
 		$this->assertSame( 'comment_mismatch', $failures['sample-plugin']['code'] );
+	}
+
+	public function testAbsentNewVersionStillBindsOffSignedVersion(): void {
+		// HIGH-1: a compromised store omits new_version to try to skip the
+		// version check. We bind off the authenticated signed version instead,
+		// so verification still completes (and the ratchet still applies).
+		$guard = $this->makeGuard(
+			array(
+				'update_resolver' => function (): object {
+					return (object) array(
+						'signature' => file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip.minisig' ) ),
+					);
+				},
+			)
+		);
+
+		$this->assertIsString( $this->intercept( $guard ) );
+	}
+
+	public function testDowngradeBelowSeenVersionBlocked(): void {
+		// HIGH-2: the site has already verified 2.0.0; a compromised store
+		// offers a genuinely-signed older 1.2.3 to roll the site back.
+		update_option( UpdaterGuard::OPTION_SEEN, array( 'sample-plugin' => '2.0.0' ) );
+
+		$guard  = $this->makeGuard();
+		$result = $this->intercept( $guard );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$failures = get_option( UpdaterGuard::OPTION_FAILURES );
+		$this->assertSame( 'downgrade', $failures['sample-plugin']['code'] );
+	}
+
+	public function testDowngradeBelowInstalledVersionBlocked(): void {
+		// The installed version is a floor even before anything is recorded.
+		$guard  = $this->makeGuard( array( 'current_version' => '3.1.0' ) );
+		$result = $this->intercept( $guard );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$failures = get_option( UpdaterGuard::OPTION_FAILURES );
+		$this->assertSame( 'downgrade', $failures['sample-plugin']['code'] );
+	}
+
+	public function testSuccessAdvancesTheDowngradeRatchet(): void {
+		$this->assertIsString( $this->intercept( $this->makeGuard() ) );
+
+		$seen = get_option( UpdaterGuard::OPTION_SEEN );
+		$this->assertSame( '1.2.3', $seen['sample-plugin'] );
+	}
+
+	public function testRatchetDoesNotRegressOnEqualOrLowerSuccess(): void {
+		update_option( UpdaterGuard::OPTION_SEEN, array( 'sample-plugin' => '1.2.3' ) );
+
+		// Re-verifying the same version is allowed and must not lower the mark.
+		$this->assertIsString( $this->intercept( $this->makeGuard() ) );
+		$this->assertSame( '1.2.3', get_option( UpdaterGuard::OPTION_SEEN )['sample-plugin'] );
+	}
+
+	public function testSignatureWithoutVersionTokenBlocked(): void {
+		// A signature whose trusted comment carries no version: cannot be bound.
+		$guard = $this->makeGuard(
+			array(
+				'update_resolver'   => static function (): object {
+					return (object) array( 'new_version' => '1.2.3' );
+				},
+				'signature_fetcher' => function (): ?string {
+					return $this->noVersionSignature();
+				},
+			)
+		);
+
+		$result = $this->intercept( $guard );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$failures = get_option( UpdaterGuard::OPTION_FAILURES );
+		$this->assertSame( 'missing_version', $failures['sample-plugin']['code'] );
 	}
 
 	public function testSuccessClearsPreviousFailureRecord(): void {
