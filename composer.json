@@ -1,0 +1,35 @@
+{
+    "name": "pattonwebz/signed-releases-client",
+    "description": "Verifies minisign (Ed25519) signatures on plugin release zips before WordPress installs them. Companion to the EDD Signed Releases store extension.",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "William Patton",
+            "email": "pattonwebz@gmail.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "suggest": {
+        "ext-sodium": "Native libsodium for fast verification. Without it, WordPress >= 5.2 provides the sodium_compat polyfill."
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6",
+        "paragonie/sodium_compat": "^1.21"
+    },
+    "autoload": {
+        "psr-4": {
+            "PattonWebz\\SignedReleases\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "PattonWebz\\SignedReleases\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    }
+}
