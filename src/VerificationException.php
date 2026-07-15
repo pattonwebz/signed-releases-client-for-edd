@@ -15,6 +15,7 @@ final class VerificationException extends \RuntimeException {
 	public const BAD_GLOBAL_SIGNATURE = 'bad_global_signature';
 	public const COMMENT_MISMATCH     = 'comment_mismatch';
 	public const UNREADABLE           = 'unreadable';
+	public const MISSING_SIGNATURE    = 'missing_signature';
 
 	private string $errorCode;
 
