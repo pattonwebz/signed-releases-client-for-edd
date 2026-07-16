@@ -121,12 +121,85 @@ final class UpdaterGuard {
 	 * Create and hook a guard in one call. The conventional entry point:
 	 *
 	 *     UpdaterGuard::register( array( ... ) );
+	 *
+	 * The README documents calling this directly inside add_action('init', ...)
+	 * with no try/catch, so a bad key string or an invalid $args shape must
+	 * never throw out of here — that would fatal every request on the site
+	 * (WSOD), not just fail to verify updates. Fail closed instead: block
+	 * this plugin's updates (when we at least know which plugin it is) and
+	 * surface the problem in wp-admin, but keep the site serving requests.
+	 *
+	 * @return self|null The guard, or null if $args was misconfigured.
 	 */
-	public static function register( array $args ): self {
-		$guard = new self( $args );
+	public static function register( array $args ): ?self {
+		try {
+			$guard = new self( $args );
+		} catch ( \Throwable $e ) {
+			self::registerConfigFailure( is_string( $args['plugin_file'] ?? null ) ? $args['plugin_file'] : null, $e );
+
+			return null;
+		}
+
 		$guard->hook();
 
 		return $guard;
+	}
+
+	/**
+	 * Best-effort fallback when construction itself fails: block updates for
+	 * the plugin we at least know the identity of (fail closed rather than
+	 * silently verifying nothing), and always report the problem somewhere
+	 * an admin — and a log — will see it.
+	 *
+	 * @param string|null $plugin_file Plugin basename, if that much of $args was valid.
+	 * @param \Throwable  $e           The construction failure.
+	 */
+	private static function registerConfigFailure( ?string $plugin_file, \Throwable $e ): void {
+		if ( null !== $plugin_file && function_exists( 'add_filter' ) ) {
+			add_filter(
+				'upgrader_pre_download',
+				static function ( $reply, $package, $upgrader = null, $hook_extra = array() ) use ( $plugin_file, $e ) {
+					unset( $package, $upgrader );
+
+					if ( ! is_array( $hook_extra ) || ( $hook_extra['plugin'] ?? null ) !== $plugin_file ) {
+						return $reply;
+					}
+
+					return new \WP_Error(
+						'pattonwebz_signed_releases_misconfigured',
+						sprintf(
+							/* translators: %s: underlying configuration error message */
+							__( 'Update blocked: the release-signature verifier is misconfigured (%s). Fix the configuration, then retry the update.', 'pattonwebz-signed-releases' ),
+							$e->getMessage()
+						)
+					);
+				},
+				10,
+				4
+			);
+		}
+
+		if ( function_exists( 'add_action' ) ) {
+			add_action(
+				'admin_notices',
+				static function () use ( $e ) {
+					if ( ! function_exists( 'current_user_can' ) || ! current_user_can( 'update_plugins' ) ) {
+						return;
+					}
+
+					printf(
+						'<div class="notice notice-error"><p><strong>%s</strong> %s</p></div>',
+						esc_html__( 'Signed Releases verification misconfigured:', 'pattonwebz-signed-releases' ),
+						esc_html( $e->getMessage() )
+					);
+				}
+			);
+		}
+
+		if ( function_exists( 'error_log' ) ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- deliberate: this is the one path where hooking a logger callable isn't available (construction never completed).
+			error_log( 'pattonwebz/signed-releases-client-for-edd: UpdaterGuard::register() failed: ' . $e->getMessage() );
+		}
 	}
 
 	public function hook(): void {

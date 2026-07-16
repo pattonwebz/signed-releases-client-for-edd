@@ -463,6 +463,83 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertContains( 'admin_notices', $tags );
 	}
 
+	/** Last hook callback registered for a tag, or null. */
+	private function lastCallbackFor( string $tag ): ?callable {
+		$callback = null;
+
+		foreach ( $GLOBALS['__wp_hooks'] as $hook ) {
+			if ( $hook['tag'] === $tag ) {
+				$callback = $hook['callback'];
+			}
+		}
+
+		return $callback;
+	}
+
+	public function testRegisterReturnsNullAndBlocksThatPluginOnBadPublicKey(): void {
+		$guard = UpdaterGuard::register(
+			array(
+				'plugin_file' => self::PLUGIN_FILE,
+				'slug'        => 'sample-plugin',
+				'store_url'   => 'https://store.example',
+				'public_keys' => array( 'not a valid minisign public key' ),
+			)
+		);
+
+		$this->assertNull( $guard, 'A construction failure must not throw out of register().' );
+
+		$blocker = $this->lastCallbackFor( 'upgrader_pre_download' );
+		$this->assertNotNull( $blocker );
+
+		$result = $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
+		$this->assertInstanceOf( \WP_Error::class, $result );
+
+		// A different plugin's update must be completely unaffected.
+		$this->assertFalse( $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => 'other/other.php' ) ) );
+	}
+
+	public function testRegisterConfigFailureShowsAdminNotice(): void {
+		UpdaterGuard::register(
+			array(
+				'plugin_file' => self::PLUGIN_FILE,
+				'slug'        => 'sample-plugin',
+				'store_url'   => 'https://store.example',
+				'public_keys' => array( 'not a valid minisign public key' ),
+			)
+		);
+
+		$notice = $this->lastCallbackFor( 'admin_notices' );
+		$this->assertNotNull( $notice );
+
+		ob_start();
+		$notice();
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'notice-error', $html );
+		$this->assertStringContainsString( 'misconfigured', $html );
+
+		$GLOBALS['__wp_user_can'] = false;
+		ob_start();
+		$notice();
+		$this->assertSame( '', ob_get_clean(), 'Must respect the update_plugins capability like the regular failure notice.' );
+	}
+
+	public function testRegisterReturnsNullWithoutBlockingWhenPluginFileItselfIsMissing(): void {
+		// Without even a valid plugin_file we can't identify which plugin's
+		// updates to block — best effort is limited to the admin notice/log.
+		$guard = UpdaterGuard::register(
+			array(
+				'slug'        => 'sample-plugin',
+				'store_url'   => 'https://store.example',
+				'public_keys' => array( file_get_contents( $this->fixture( 'testkey.pub' ) ) ),
+			)
+		);
+
+		$this->assertNull( $guard );
+		$this->assertNull( $this->lastCallbackFor( 'upgrader_pre_download' ) );
+		$this->assertNotNull( $this->lastCallbackFor( 'admin_notices' ) );
+	}
+
 	public function testAcceptsBareBase64PublicKey(): void {
 		$lines = array_values(
 			array_filter( array_map( 'trim', file( $this->fixture( 'testkey.pub' ) ) ) )

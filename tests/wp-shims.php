@@ -66,6 +66,18 @@ if ( ! function_exists( 'esc_html' ) ) {
 	}
 }
 
+if ( ! function_exists( '__' ) ) {
+	function __( $text, $domain = 'default' ) {
+		return $text;
+	}
+}
+
+if ( ! function_exists( 'esc_html__' ) ) {
+	function esc_html__( $text, $domain = 'default' ) {
+		return esc_html( __( $text, $domain ) );
+	}
+}
+
 if ( ! function_exists( 'add_filter' ) ) {
 	function add_filter( $tag, $callback, $priority = 10, $accepted_args = 1 ) {
 		$GLOBALS['__wp_hooks'][] = array( 'tag' => $tag, 'callback' => $callback );

@@ -56,6 +56,13 @@ add_action( 'init', function () {
 Register on `init` (like the EDD SL updater itself) so wp-cron
 auto-updates are covered. Multiple keys are only for rotation windows.
 
+`register()` never throws, even with a malformed `$args` (a bad key
+string, a missing required key). A misconfiguration must not be able to
+white-screen the site it's protecting — instead it returns `null`,
+blocks *this plugin's* updates (fail closed) when the plugin file was at
+least identifiable, and surfaces the problem via an always-visible
+`admin_notices` warning plus an `error_log()` line.
+
 The mode can be adjusted at runtime without a release — per plugin or for
 all of them:
 
