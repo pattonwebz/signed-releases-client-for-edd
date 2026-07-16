@@ -19,9 +19,11 @@ the update path against a compromised store. Companion to the
 - **`log` / `enforce` modes** with a runtime kill-switch filter, for staged
   rollouts.
 
-This repository is a read-only subtree split of the
-[`signed-zips-edd`](https://github.com/pattonwebz/signed-zips-edd) monorepo —
-issues and changes belong there.
+This repository is the package's home — issues and changes belong here.
+(It began life inside the
+[`signed-zips-edd`](https://github.com/pattonwebz/signed-zips-edd) build
+monorepo, which retains the system's planning docs, the store extension,
+and the integration guide.)
 
 ## Install
 
