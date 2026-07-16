@@ -31,12 +31,13 @@ Signed Releases for EDD store extension, which serves the signatures.
 composer require pattonwebz/signed-releases-client-for-edd
 ```
 
-While this repository is private, add it as a VCS repository first:
+Until the package is published on Packagist, add it as a VCS repository
+first:
 
 ```json
 {
     "repositories": [
-        { "type": "vcs", "url": "git@github.com:pattonwebz/signed-releases-client-for-edd.git" }
+        { "type": "vcs", "url": "https://github.com/pattonwebz/signed-releases-client-for-edd" }
     ]
 }
 ```
