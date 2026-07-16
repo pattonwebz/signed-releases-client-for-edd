@@ -1,4 +1,4 @@
-# Signed Releases Client
+# Signed Releases Client for EDD
 
 Verifies [minisign](https://jedisct1.github.io/minisign/) (Ed25519)
 signatures on plugin release zips **before** WordPress installs them,
@@ -28,7 +28,7 @@ Signed Releases for EDD store extension, which serves the signatures.
 ## Install
 
 ```sh
-composer require pattonwebz/signed-releases-client
+composer require pattonwebz/signed-releases-client-for-edd
 ```
 
 While this repository is private, add it as a VCS repository first:
@@ -36,7 +36,7 @@ While this repository is private, add it as a VCS repository first:
 ```json
 {
     "repositories": [
-        { "type": "vcs", "url": "git@github.com:pattonwebz/signed-releases-client.git" }
+        { "type": "vcs", "url": "git@github.com:pattonwebz/signed-releases-client-for-edd.git" }
     ]
 }
 ```
