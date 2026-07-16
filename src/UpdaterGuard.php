@@ -43,6 +43,9 @@ final class UpdaterGuard {
 	/** Highest signed version verified per slug — the downgrade ratchet. */
 	public const OPTION_SEEN = 'pattonwebz_signed_releases_seen';
 
+	/** A .minisig is well under 1 KB; anything bigger is not a signature. */
+	private const MAX_SIGNATURE_BYTES = 8192;
+
 	/** Plugin basename, e.g. "my-plugin/my-plugin.php". */
 	private string $pluginFile;
 
@@ -619,9 +622,9 @@ final class UpdaterGuard {
 		}
 
 		$failures = get_option( self::OPTION_FAILURES, array() );
-		$failure  = $failures[ $this->slug ] ?? null;
+		$failure  = is_array( $failures ) ? ( $failures[ $this->slug ] ?? null ) : null;
 
-		if ( null === $failure ) {
+		if ( ! is_array( $failure ) || ! isset( $failure['message'] ) || ! is_string( $failure['message'] ) ) {
 			return;
 		}
 
@@ -643,19 +646,29 @@ final class UpdaterGuard {
 	}
 
 	private function defaultSignatureFetcher( string $version ): ?string {
+		// add_query_arg() does NOT urlencode values; encode them ourselves so
+		// e.g. a "+" in a semver build suffix survives ($_GET would otherwise
+		// decode it to a space and the store's version lookup would miss).
 		$args = array(
 			'edd_action' => 'get_release_signature',
-			'slug'       => $this->slug,
-			'version'    => $version,
+			'slug'       => rawurlencode( $this->slug ),
+			'version'    => rawurlencode( $version ),
 		);
 
 		if ( null !== $this->itemId ) {
 			$args['item_id'] = $this->itemId;
 		}
 
-		$response = wp_remote_get(
+		// The store is untrusted by design, so treat its responses accordingly:
+		// wp_safe_remote_get() re-validates redirect targets, and the size cap
+		// stops a hostile store feeding an unbounded body into memory (the
+		// same attacker-forced-read class as the rejected legacy algorithm).
+		$response = wp_safe_remote_get(
 			add_query_arg( $args, $this->storeUrl ),
-			array( 'timeout' => 15 )
+			array(
+				'timeout'             => 15,
+				'limit_response_size' => self::MAX_SIGNATURE_BYTES,
+			)
 		);
 
 		if ( is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
@@ -670,7 +683,13 @@ final class UpdaterGuard {
 	private function defaultUpdateResolver(): ?object {
 		$transient = get_site_transient( 'update_plugins' );
 
-		return $transient->response[ $this->pluginFile ] ?? null;
+		if ( ! is_object( $transient ) ) {
+			return null; // get_site_transient() returns false when unset.
+		}
+
+		$row = $transient->response[ $this->pluginFile ] ?? null;
+
+		return is_object( $row ) ? $row : null;
 	}
 
 	private function defaultLogger( string $level, string $message ): void {
