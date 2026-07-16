@@ -165,6 +165,33 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertFalse( $this->intercept( $this->makeGuard() ) );
 	}
 
+	public function testInvalidModeFilterFallsBackInsteadOfFatal(): void {
+		// A typo'd override used to throw uncaught out of a live upgrader
+		// call - the kill switch becoming the footgun. It must instead fall
+		// back to the configured (enforce) mode and keep blocking as normal.
+		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = 'enforcee';
+
+		$guard  = $this->makeGuard( array( 'downloader' => $this->downloaderFor( 'sample-plugin-1.2.3.tampered.zip' ) ) );
+		$result = $this->intercept( $guard );
+
+		$this->assertInstanceOf( \WP_Error::class, $result, 'Falls back to enforce, so a bad package is still blocked.' );
+		$this->assertNotEmpty( $this->logged );
+		$this->assertSame( 'warning', $this->logged[0][0] );
+		$this->assertStringContainsString( 'invalid mode', $this->logged[0][1] );
+	}
+
+	public function testNonStringModeFilterFallsBackInsteadOfFatal(): void {
+		// strict_types rejects a non-string outright (TypeError); must be
+		// caught the same as an InvalidArgumentException from a bad string.
+		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = array( 'enforce' );
+
+		$result = $this->intercept( $this->makeGuard() );
+
+		$this->assertIsString( $result, 'Falls back to the configured mode and verifies normally rather than fataling.' );
+		$this->assertNotEmpty( $this->logged );
+		$this->assertSame( 'warning', $this->logged[0][0] );
+	}
+
 	public function testDownloadErrorPassesThrough(): void {
 		$error = new \WP_Error( 'http_404', 'Not found' );
 		$guard = $this->makeGuard(

@@ -219,9 +219,29 @@ final class UpdaterGuard {
 	 */
 	public function interceptDownload( $reply, $package, $upgrader = null, $hook_extra = array() ) {
 		// The mode can be adjusted at runtime — the kill switch if a signing
-		// mishap ever blocks legitimate updates before a fix ships.
-		$mode   = apply_filters( 'pattonwebz_signed_releases_mode', $this->policy->mode(), $this->slug );
-		$policy = new VerificationPolicy( $mode );
+		// mishap ever blocks legitimate updates before a fix ships. The
+		// switch itself must not become the footgun: a typo'd override used
+		// to fatal the upgrader (VerificationPolicy rejects unknown modes,
+		// and strict_types rejects a non-string outright) — fall back to the
+		// configured mode instead of throwing out of a live update.
+		$mode = apply_filters( 'pattonwebz_signed_releases_mode', $this->policy->mode(), $this->slug );
+
+		try {
+			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
+		} catch ( \Throwable $e ) {
+			$policy = $this->policy;
+
+			call_user_func(
+				$this->logger,
+				'warning',
+				sprintf(
+					'[signed-releases] %s: pattonwebz_signed_releases_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					$this->slug,
+					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
+					$this->policy->mode()
+				)
+			);
+		}
 
 		// Not our plugin (or verification disabled): never disturb another
 		// callback's reply.
