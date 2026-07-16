@@ -397,7 +397,7 @@ final class UpdaterGuard {
 	}
 
 	private function recordSeenVersion( string $version ): void {
-		if ( '' === $version || ! function_exists( 'update_option' ) ) {
+		if ( '' === $version || ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
 		}
 
@@ -465,7 +465,7 @@ final class UpdaterGuard {
 	}
 
 	private function recordFailure( VerificationException $e ): void {
-		if ( ! function_exists( 'update_option' ) ) {
+		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
 		}
 
@@ -481,7 +481,7 @@ final class UpdaterGuard {
 	}
 
 	private function clearFailures(): void {
-		if ( ! function_exists( 'get_option' ) ) {
+		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
 			return;
 		}
 
