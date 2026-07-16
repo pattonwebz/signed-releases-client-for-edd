@@ -8,13 +8,17 @@
  * pinned public keys, and hands WordPress either the verified file or a
  * WP_Error (enforce mode) that aborts the install with the old version intact.
  *
- * The signature is looked up in two places, in order:
+ * The signature is looked up in three places, in order, moving on whenever
+ * verification fails with the current candidate:
  *  1. a `signature` property on the plugin's row in the update_plugins
  *     transient (present when the store injects it into the EDD SL
  *     get_version response), then
- *  2. the store's public signature endpoint
- *     (?edd_action=get_release_signature — served by the EDD Signed
- *     Releases store extension).
+ *  2. the store's public signature endpoint for the offered version, then
+ *  3. the endpoint's signature for the store's *current* version — which
+ *     heals the release race where the package was replaced in place
+ *     between this site's cached version check and the download.
+ *     (Endpoint: ?edd_action=get_release_signature — served by the
+ *     "Signed Releases for EDD" store extension.)
  *
  * A missing signature is treated exactly like an invalid one — otherwise
  * stripping the signature would bypass verification entirely.
@@ -171,20 +175,27 @@ final class UpdaterGuard {
 		$expected = isset( $update->new_version ) ? (string) $update->new_version : null;
 
 		try {
-			$minisig_text = $this->locateSignature( $update, $expected );
-
-			$signature = Signature::fromMinisigText( $minisig_text );
-			$comment   = $this->verifier->verifyFile( $file, $signature );
-
-			// Bind the authenticated slug to our configured slug (cross-plugin
-			// replay defense). Slug only here — version is handled below off
-			// the authenticated comment, not the store-supplied $expected.
-			$comment->assertMatches( $this->slug, null );
-
-			$signed_version = $comment->get( 'version' );
-			$this->assertSignedVersionAcceptable( $signed_version, $expected );
+			list( $comment, $signed_version ) = $this->verifyAgainstCandidates( $file, $update, $expected );
 		} catch ( VerificationException $e ) {
 			return $this->handleFailure( $e, $policy, $package, $file, $downloaded );
+		}
+
+		if ( null !== $expected && '' !== $expected && $signed_version !== $expected ) {
+			// A release replaced the file between this site's cached update
+			// check and the download (one live version per download, replaced
+			// in place). The delivered package verified as a genuinely newer
+			// signed release, so accept it rather than strand the customer
+			// until the update transient expires.
+			call_user_func(
+				$this->logger,
+				'info',
+				sprintf(
+					'[signed-releases] %s: accepted signed version %s although the cached update offer said %s (release replaced in place between version check and download).',
+					$this->slug,
+					$signed_version,
+					$expected
+				)
+			);
 		}
 
 		// Advance the downgrade ratchet only on a fully accepted release.
@@ -203,32 +214,110 @@ final class UpdaterGuard {
 		return $file;
 	}
 
-	private function locateSignature( ?object $update, ?string $version ): string {
-		if ( isset( $update->signature ) && is_string( $update->signature ) && '' !== $update->signature ) {
-			return $update->signature;
+	/**
+	 * Try each available signature until one fully verifies the file.
+	 *
+	 * Candidates, in order: the signature cached in the update transient,
+	 * the endpoint's signature for the offered version, and finally the
+	 * endpoint's *current* signature (empty version). The last one is what
+	 * heals the release race: with one live version per download, a package
+	 * downloaded moments after a release carries newer bytes than the
+	 * transient's hours-old signature — only a fresh fetch can match it.
+	 *
+	 * Trying several store-supplied signatures concedes nothing: the store
+	 * chooses what it serves either way, and every candidate must still pass
+	 * the pinned-key crypto check, the slug binding, and the version rules.
+	 *
+	 * @param string      $file     Path to the downloaded package.
+	 * @param object|null $update   The plugin's update_plugins row, if any.
+	 * @param string|null $expected Store-offered new_version, if any.
+	 *
+	 * @return array{0: TrustedComment, 1: string} The authenticated comment and signed version.
+	 *
+	 * @throws VerificationException The first (most authoritative) failure when no candidate verifies.
+	 */
+	private function verifyAgainstCandidates( string $file, ?object $update, ?string $expected ): array {
+		$first = null;
+		$tried = array();
+
+		foreach ( $this->signatureCandidates( $update, $expected ) as $minisig_text ) {
+			if ( in_array( $minisig_text, $tried, true ) ) {
+				continue;
+			}
+			$tried[] = $minisig_text;
+
+			try {
+				$signature = Signature::fromMinisigText( $minisig_text );
+				$comment   = $this->verifier->verifyFile( $file, $signature );
+
+				// Bind the authenticated slug to our configured slug
+				// (cross-plugin replay defense). Slug only here — version is
+				// checked off the authenticated comment, not $expected.
+				$comment->assertMatches( $this->slug, null );
+
+				$signed_version = $comment->get( 'version' );
+				$this->assertSignedVersionAcceptable( $signed_version, $expected );
+
+				return array( $comment, (string) $signed_version );
+			} catch ( VerificationException $e ) {
+				if ( null === $first ) {
+					$first = $e;
+				}
+			}
 		}
 
-		$fetched = null !== $version ? call_user_func( $this->signatureFetcher, $version ) : null;
-
-		if ( is_string( $fetched ) && '' !== $fetched ) {
-			return $fetched;
-		}
-
-		throw VerificationException::withCode(
+		throw null !== $first ? $first : VerificationException::withCode(
 			VerificationException::MISSING_SIGNATURE,
 			sprintf(
 				'No signature available for %s %s from %s.',
 				$this->slug,
-				$version ?? '(unknown version)',
+				$expected ?? '(unknown version)',
 				$this->storeUrl
 			)
 		);
 	}
 
 	/**
+	 * Yield signature texts to try, lazily — later fetches only happen when
+	 * earlier candidates failed.
+	 *
+	 * @param object|null $update   The plugin's update_plugins row, if any.
+	 * @param string|null $expected Store-offered new_version, if any.
+	 *
+	 * @return \Generator<string>
+	 */
+	private function signatureCandidates( ?object $update, ?string $expected ): \Generator {
+		if ( isset( $update->signature ) && is_string( $update->signature ) && '' !== $update->signature ) {
+			yield $update->signature;
+		}
+
+		if ( null !== $expected && '' !== $expected ) {
+			$fetched = call_user_func( $this->signatureFetcher, $expected );
+
+			if ( is_string( $fetched ) && '' !== $fetched ) {
+				yield $fetched;
+			}
+		}
+
+		// Last resort: the store's signature for whatever version is live
+		// right now (the release-race healer).
+		$current = call_user_func( $this->signatureFetcher, '' );
+
+		if ( is_string( $current ) && '' !== $current ) {
+			yield $current;
+		}
+	}
+
+	/**
 	 * Enforce version binding off the *authenticated* signed version:
 	 *  - it must be present (a signature with no version can't be bound);
-	 *  - if the store also told us a version, the two must agree;
+	 *  - if the store also told us a version, the signed version must be that
+	 *    version or a strictly newer one. Newer covers the release race (the
+	 *    file was replaced between this site's cached version check and the
+	 *    download) and concedes nothing: the store controls new_version, so a
+	 *    malicious store could simply advertise the newer version honestly.
+	 *    Older is the actual attack (pinning a site to a stale, still-validly-
+	 *    signed release) and stays blocked;
 	 *  - it must not be older than the highest version this site has already
 	 *    verified, nor older than the installed version — the downgrade
 	 *    ratchet that stops a compromised store rolling a site back to an
@@ -237,7 +326,7 @@ final class UpdaterGuard {
 	 * @param string|null $signed_version From the authenticated trusted comment.
 	 * @param string|null $expected       Store-supplied new_version, if any.
 	 *
-	 * @throws VerificationException When the version is missing, disagrees, or is a downgrade.
+	 * @throws VerificationException When the version is missing, older than offered, or a downgrade.
 	 */
 	private function assertSignedVersionAcceptable( ?string $signed_version, ?string $expected ): void {
 		if ( null === $signed_version || '' === $signed_version ) {
@@ -247,11 +336,12 @@ final class UpdaterGuard {
 			);
 		}
 
-		if ( null !== $expected && '' !== $expected && $signed_version !== $expected ) {
+		if ( null !== $expected && '' !== $expected && $signed_version !== $expected
+			&& ! version_compare( $signed_version, $expected, '>' ) ) {
 			throw VerificationException::withCode(
 				VerificationException::COMMENT_MISMATCH,
 				sprintf(
-					'Signed version "%s" does not match the offered version "%s".',
+					'Signed version "%s" is neither the offered version "%s" nor a newer release.',
 					$signed_version,
 					$expected
 				)

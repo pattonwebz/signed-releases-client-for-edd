@@ -277,6 +277,90 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertIsString( $this->intercept( $guard ) );
 	}
 
+	public function testReleaseRaceHealedByFreshCurrentSignature(): void {
+		// The store has one live version per download, replaced in place. This
+		// site cached "1.2.2 available" (with 1.2.2's signature) hours ago;
+		// 1.2.3 shipped since, so the download delivers 1.2.3 bytes that the
+		// cached signature cannot verify. The guard must fall through to the
+		// endpoint's *current* signature and accept the newer release instead
+		// of stranding the customer until the transient expires.
+		$fetches = array();
+
+		$guard = $this->makeGuard(
+			array(
+				'update_resolver'   => function (): object {
+					return (object) array(
+						'new_version' => '1.2.2',
+						// Stale signature: validly formed, but not for these bytes.
+						'signature'   => file_get_contents( $this->fixture( 'wrong-key.minisig' ) ),
+					);
+				},
+				'signature_fetcher' => function ( string $version ) use ( &$fetches ): ?string {
+					$fetches[] = $version;
+
+					// The offered version's signature is gone with the old file;
+					// only the current ('') signature is useful.
+					return '' === $version
+						? file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip.minisig' ) )
+						: null;
+				},
+			)
+		);
+
+		$result = $this->intercept( $guard );
+
+		$this->assertIsString( $result, 'Race must heal, not block.' );
+		$this->assertSame( array( '1.2.2', '' ), $fetches, 'Current-signature fetch is the last resort.' );
+		$this->assertSame( '1.2.3', get_option( UpdaterGuard::OPTION_SEEN )['sample-plugin'] );
+		$this->assertNotSame( array(), $this->logged, 'Accepting a newer-than-offered release is logged.' );
+		$this->assertStringContainsString( 'replaced in place', $this->logged[0][1] );
+	}
+
+	public function testNewerSignedVersionAcceptedOverStaleOffer(): void {
+		// Version binding accepts strictly newer: the store controls
+		// new_version, so blocking newer would only punish the race, not an
+		// attacker (who would simply advertise the newer version honestly).
+		$guard = $this->makeGuard(
+			array(
+				'downloader'        => $this->downloaderFor( 'sample-plugin-1.2.3.zip' ),
+				'signature_fetcher' => function (): ?string {
+					return file_get_contents( $this->fixture( 'version-mismatch.minisig' ) ); // Signs these bytes as 9.9.9.
+				},
+			)
+		);
+
+		$this->assertIsString( $this->intercept( $guard ) );
+		$this->assertSame( '9.9.9', get_option( UpdaterGuard::OPTION_SEEN )['sample-plugin'] );
+	}
+
+	public function testRaceHealerCannotRescueADowngrade(): void {
+		// The fresh-current-signature fallback still sits behind the ratchet:
+		// a "current" release older than what this site has already verified
+		// stays blocked, race or no race.
+		update_option( UpdaterGuard::OPTION_SEEN, array( 'sample-plugin' => '2.0.0' ) );
+
+		$guard = $this->makeGuard(
+			array(
+				'update_resolver'   => function (): object {
+					return (object) array(
+						'new_version' => '1.2.2',
+						'signature'   => file_get_contents( $this->fixture( 'wrong-key.minisig' ) ),
+					);
+				},
+				'signature_fetcher' => function ( string $version ): ?string {
+					return '' === $version
+						? file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip.minisig' ) )
+						: null;
+				},
+			)
+		);
+
+		$result = $this->intercept( $guard );
+
+		$this->assertInstanceOf( \WP_Error::class, $result );
+		$this->assertSame( '2.0.0', get_option( UpdaterGuard::OPTION_SEEN )['sample-plugin'], 'Ratchet must not move on a blocked install.' );
+	}
+
 	public function testDowngradeBelowSeenVersionBlocked(): void {
 		// HIGH-2: the site has already verified 2.0.0; a compromised store
 		// offers a genuinely-signed older 1.2.3 to roll the site back.
