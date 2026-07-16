@@ -78,7 +78,14 @@ final class UpdaterGuard {
 	 *     @type string   $store_url        Required. EDD store URL.
 	 *     @type string[] $public_keys      Required. minisign.pub file contents (or bare base64 lines).
 	 *     @type int      $item_id          Optional. EDD download ID, passed to the signature endpoint.
-	 *     @type string   $current_version  Optional. Installed plugin version; used as a downgrade floor.
+	 *     @type string   $current_version  Optional in name, effectively required in practice: the
+	 *                                      installed plugin version, used as the downgrade floor. Omit
+	 *                                      it and a fresh install has NO floor until the first verified
+	 *                                      update records a high-water mark — a compromised store could
+	 *                                      walk that install up to any validly-signed release at or
+	 *                                      above zero, including a known-vulnerable one, before the
+	 *                                      ratchet engages. Pass `get_plugin_data( PLUGIN_FILE )['Version']`
+	 *                                      if you don't already have the version handy.
 	 *     @type string   $mode             Optional. off|log|enforce. Default log.
 	 *     @type callable $downloader        Optional. Test/DI override.
 	 *     @type callable $signature_fetcher Optional. Test/DI override.
@@ -386,6 +393,19 @@ final class UpdaterGuard {
 	 * @param string|null $expected Store-offered new_version, if any.
 	 *
 	 * @return \Generator<string>
+	 *
+	 * Candidate #1 (the transient's `signature` property) only exists if
+	 * whatever EDD updater class populated `$update` copied the *entire*
+	 * decoded API response onto the transient row rather than whitelisting
+	 * known fields. Confirmed true for the classic `EDD_SL_Plugin_Updater`
+	 * (it assigns the whole decoded object: `$_transient_data->response[$name]
+	 * = $version_info;`), so the injected `signature` key survives there.
+	 * Not independently confirmed for every `edd-sl-sdk`-based updater — if a
+	 * newer SDK whitelists transient fields, this candidate is silently
+	 * always absent. That's fine: candidates #2/#3 (fetched directly from the
+	 * store's public signature endpoint below) don't depend on any updater
+	 * internals and are what actually make verification work regardless of
+	 * which EDD updater class the integrating plugin uses.
 	 */
 	private function signatureCandidates( ?object $update, ?string $expected ): \Generator {
 		if ( isset( $update->signature ) && is_string( $update->signature ) && '' !== $update->signature ) {

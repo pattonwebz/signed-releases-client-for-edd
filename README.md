@@ -10,7 +10,11 @@ Signed Releases for EDD store extension, which serves the signatures.
 - **Version binding + downgrade ratchet** — the authenticated trusted
   comment binds slug and version, so a compromised store cannot replay
   another plugin's package, an older release, or anything below the
-  installed version.
+  installed version *once that floor is established* (see the
+  `current_version` note below — a fresh install with no floor yet can
+  still be walked up to any validly-signed release at or above zero,
+  including an older vulnerable one, until the first verified update sets
+  the high-water mark).
 - **Release-race tolerant** — if the package was replaced between a site's
   cached update check and the download, the guard fetches the store's
   current signature and accepts a strictly newer verified release.
@@ -56,6 +60,15 @@ add_action( 'init', function () {
 Register on `init` (like the EDD SL updater itself) so wp-cron
 auto-updates are covered. Multiple keys are only for rotation windows.
 
+`current_version` is optional in name only — omit it and a fresh install
+has no downgrade floor until the first verified update sets one (see
+Compatibility contract below). If you don't already have the running
+version handy, derive it instead of skipping it:
+
+```php
+'current_version' => get_plugin_data( MY_PLUGIN_FILE )['Version'],
+```
+
 `register()` never throws, even with a malformed `$args` (a bad key
 string, a missing required key). A misconfiguration must not be able to
 white-screen the site it's protecting — instead it returns `null`,
@@ -80,6 +93,16 @@ comment matching the configured slug, and a signed version that is the
 offered version (or newer) and never below the installed/previously-seen
 floor. Any failure logs (`log` mode) or aborts the install with the old
 version intact (`enforce` mode).
+
+The signature itself comes from whichever of three sources answers first:
+the update transient's own `signature` property (present only if your EDD
+updater class copies the full API response onto the transient — confirmed
+true for the classic `EDD_SL_Plugin_Updater`, not independently verified
+for every `edd-sl-sdk`-based updater), the store's public endpoint for the
+offered version, or — as a release-race healer — the store's endpoint for
+whatever version is live right now. The endpoint fallbacks don't depend on
+your updater class at all, so verification works regardless of which one
+your plugin uses.
 
 ## Compatibility contract
 
