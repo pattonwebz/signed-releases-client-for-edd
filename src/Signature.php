@@ -69,7 +69,17 @@ final class Signature {
 		}
 
 		$algorithm = substr( $sig_raw, 0, 2 );
-		if ( self::ALG_PREHASHED !== $algorithm && self::ALG_LEGACY !== $algorithm ) {
+		if ( self::ALG_LEGACY === $algorithm ) {
+			// The 2-byte algorithm tag is covered by neither the file signature
+			// nor the global signature, so it's attacker-selectable on any
+			// signature a compromised store serves — flipping it forces the
+			// legacy path to read the entire (attacker-sized) file into memory
+			// before any Ed25519 check runs, a memory-exhaustion DoS. The
+			// signing pipeline only ever emits ALG_PREHASHED, so reject legacy
+			// outright rather than support a path nothing legitimate uses.
+			throw self::malformed( 'Legacy (non-prehashed) minisign signatures are not supported; only the modern prehashed algorithm is accepted.' );
+		}
+		if ( self::ALG_PREHASHED !== $algorithm ) {
 			throw self::malformed( 'Unknown signature algorithm "' . $algorithm . '".' );
 		}
 

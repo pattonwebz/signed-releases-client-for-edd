@@ -157,11 +157,12 @@ class MinisignVerifierTest extends TestCase {
 		$this->makeVerifier( array() );
 	}
 
-	public function testLegacyRawContentAlgorithmVerifies(): void {
-		// Modern minisign only emits prehashed (ED) signatures, so build a
-		// legacy (Ed) signature by hand with libsodium to cover that path.
+	public function testLegacySignatureIsRejectedAtParseTimeNotVerification(): void {
+		// The legacy (raw-content) algorithm is rejected by Signature::fromMinisigText()
+		// itself (see SignatureTest), so it can never reach the verifier — the
+		// attacker-selectable whole-file-read DoS this used to enable is closed
+		// upstream of MinisignVerifier entirely.
 		$keypair = sodium_crypto_sign_keypair();
-		$pk      = sodium_crypto_sign_publickey( $keypair );
 		$sk      = sodium_crypto_sign_secretkey( $keypair );
 		$key_id  = random_bytes( 8 );
 		$data    = 'legacy signed content';
@@ -175,11 +176,7 @@ class MinisignVerifierTest extends TestCase {
 			. 'trusted comment: ' . $comment . "\n"
 			. base64_encode( $global_sig ) . "\n";
 
-		$public_key = PublicKey::fromBase64( base64_encode( 'Ed' . $key_id . $pk ) );
-		$verifier   = $this->makeVerifier( array( $public_key ) );
-
-		$result = $verifier->verifyString( $data, Signature::fromMinisigText( $minisig ) );
-
-		$this->assertSame( 'legacy-plugin', $result->get( 'slug' ) );
+		$this->expectException( VerificationException::class );
+		Signature::fromMinisigText( $minisig );
 	}
 }

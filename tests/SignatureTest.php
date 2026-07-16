@@ -74,4 +74,18 @@ final class SignatureTest extends TestCase {
 
 		$this->assertSame( Signature::ALG_PREHASHED, $sig->algorithm() );
 	}
+
+	public function testRejectsLegacyAlgorithm(): void {
+		// The 2-byte algorithm tag is covered by neither signature, so it's
+		// attacker-selectable on any signature a compromised store serves;
+		// accepting it lets the legacy branch be forced open on demand
+		// (whole-file read before any check). The pipeline never emits it,
+		// so reject outright rather than support an unused, riskier path.
+		$lines    = preg_split( '/\R/', $this->fixtureText() );
+		$raw      = base64_decode( $lines[1], true );
+		$lines[1] = base64_encode( 'Ed' . substr( $raw, 2 ) );
+
+		$this->expectException( VerificationException::class );
+		Signature::fromMinisigText( implode( "\n", $lines ) );
+	}
 }

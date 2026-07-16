@@ -45,15 +45,11 @@ class MinisignVerifier {
 		$this->assertCryptoAvailable();
 		$key = $this->trustedKeyFor( $signature );
 
-		if ( Signature::ALG_PREHASHED === $signature->algorithm() ) {
-			$message = $this->hashFileContents( $file_path );
-		} else {
-			$message = @file_get_contents( $file_path );
-
-			if ( false === $message ) {
-				throw $this->unreadable( $file_path );
-			}
-		}
+		// Signature::fromMinisigText() rejects the legacy (raw-content)
+		// algorithm, so every signature reaching here is prehashed — stream
+		// the hash rather than ever reading a whole (attacker-sized) file
+		// into memory.
+		$message = $this->hashFileContents( $file_path );
 
 		return $this->verifyMessage( $message, $signature, $key );
 	}
@@ -65,11 +61,9 @@ class MinisignVerifier {
 		$this->assertCryptoAvailable();
 		$key = $this->trustedKeyFor( $signature );
 
-		if ( Signature::ALG_PREHASHED === $signature->algorithm() ) {
-			$state = $this->hashInit();
-			$this->hashUpdate( $state, $data );
-			$data = $this->hashFinal( $state );
-		}
+		$state = $this->hashInit();
+		$this->hashUpdate( $state, $data );
+		$data = $this->hashFinal( $state );
 
 		return $this->verifyMessage( $data, $signature, $key );
 	}
