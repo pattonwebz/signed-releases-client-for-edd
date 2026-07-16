@@ -493,6 +493,13 @@ final class UpdaterGuard {
 		}
 	}
 
+	/**
+	 * Deliberately not dismissible: a signature-verification failure means
+	 * the installed release could not be authenticated, which stays true
+	 * (and worth an admin's attention) until the next check actually
+	 * succeeds and clearFailures() removes it — not until someone clicks
+	 * away the notice.
+	 */
 	public function renderFailureNotice(): void {
 		if ( ! current_user_can( 'update_plugins' ) ) {
 			return;
@@ -506,7 +513,7 @@ final class UpdaterGuard {
 		}
 
 		printf(
-			'<div class="notice notice-error is-dismissible"><p><strong>%s:</strong> %s</p></div>',
+			'<div class="notice notice-error"><p><strong>%s:</strong> %s</p></div>',
 			esc_html( sprintf( 'Signature verification problem for %s', $this->slug ) ),
 			esc_html( $failure['message'] )
 		);
