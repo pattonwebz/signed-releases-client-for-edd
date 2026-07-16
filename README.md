@@ -58,13 +58,32 @@ UpdaterGuard::register( array(
 See `docs/plugin-integration.md` in the monorepo for the full integration
 guide, key distribution, and rollout sequence.
 
-## If several of your plugins bundle this package
+## Several plugins bundling this package — the compatibility contract
 
-Two plugins each shipping `PattonWebz\SignedReleases` under their own
-`vendor/` means whichever loads first wins — silent version skew. If more
-than one plugin on the same sites will bundle this, prefix it per plugin at
-build time with [Strauss](https://github.com/BrianHenryIE/strauss) (or
-PHP-Scoper); the package is plain PSR-4 and prefixes cleanly.
+This is a plain composer package, bundled un-prefixed. When several active
+plugins each ship a copy, PHP loads each class once, from whichever
+plugin's autoloader runs first — **the first-loaded copy serves every
+consumer on the site**. That model is deliberate, and it rests on one hard
+promise:
+
+**Within a major version, nothing breaks. Ever.** Concretely:
+
+- The public API only grows: no removed/renamed classes or methods, no new
+  required constructor args, no changed defaults that alter verification
+  outcomes.
+- The persisted option formats (`pattonwebz_signed_releases_seen`,
+  `pattonwebz_signed_releases_failures` — slug-keyed arrays) are frozen.
+- Hook names and signatures (`pattonwebz_signed_releases_mode`,
+  `_verified`, `_failure`) are frozen.
+
+A breaking change means a new major version — and because copies share one
+namespace, mixing majors across plugins on one site is unsupported: ship
+the major bump across all your plugins together.
+
+The corollary: a site running one outdated plugin may execute that stale
+copy's verification code even when co-installed plugins bundle a newer
+one. Keeping plugins updated is the site's responsibility — the same
+responsibility updates themselves already carry.
 
 ## Development
 

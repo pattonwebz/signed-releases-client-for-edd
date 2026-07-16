@@ -30,6 +30,14 @@ namespace PattonWebz\SignedReleases;
 
 final class UpdaterGuard {
 
+	/*
+	 * COMPATIBILITY CONTRACT — this package ships un-prefixed in several
+	 * plugins at once and the first-loaded copy serves them all. These
+	 * option names, their slug-keyed array shapes, and the
+	 * pattonwebz_signed_releases_{mode,verified,failure} hook signatures
+	 * are frozen: changing any of them within a major version breaks
+	 * co-installed plugins running another copy. See README.
+	 */
 	public const OPTION_FAILURES = 'pattonwebz_signed_releases_failures';
 
 	/** Highest signed version verified per slug — the downgrade ratchet. */
