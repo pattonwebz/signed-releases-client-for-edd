@@ -80,7 +80,12 @@ if ( ! function_exists( 'esc_html__' ) ) {
 
 if ( ! function_exists( 'add_filter' ) ) {
 	function add_filter( $tag, $callback, $priority = 10, $accepted_args = 1 ) {
-		$GLOBALS['__wp_hooks'][] = array( 'tag' => $tag, 'callback' => $callback );
+		$GLOBALS['__wp_hooks'][] = array(
+			'tag'           => $tag,
+			'callback'      => $callback,
+			'priority'      => $priority,
+			'accepted_args' => $accepted_args,
+		);
 
 		return true;
 	}
@@ -92,10 +97,74 @@ if ( ! function_exists( 'add_action' ) ) {
 	}
 }
 
+if ( ! function_exists( 'is_wp_error' ) ) {
+	function is_wp_error( $thing ) {
+		return $thing instanceof WP_Error;
+	}
+}
+
+if ( ! function_exists( 'add_query_arg' ) ) {
+	// Like the real one, values are appended verbatim — add_query_arg() does
+	// NOT urlencode, which is exactly what defaultSignatureFetcher() must
+	// compensate for.
+	function add_query_arg( $args, $url ) {
+		$pairs = array();
+
+		foreach ( $args as $key => $value ) {
+			$pairs[] = $key . '=' . $value;
+		}
+
+		return $url . ( false === strpos( $url, '?' ) ? '?' : '&' ) . implode( '&', $pairs );
+	}
+}
+
+if ( ! function_exists( 'wp_safe_remote_get' ) ) {
+	// Records every request; responses come from a FIFO queue. An empty queue
+	// yields a WP_Error, like an unreachable host.
+	function wp_safe_remote_get( $url, $args = array() ) {
+		$GLOBALS['__wp_http_requests'][] = array( 'url' => $url, 'args' => $args );
+
+		if ( ! empty( $GLOBALS['__wp_http_queue'] ) ) {
+			return array_shift( $GLOBALS['__wp_http_queue'] );
+		}
+
+		return new WP_Error( 'http_request_failed', 'No response queued.' );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+	function wp_remote_retrieve_response_code( $response ) {
+		if ( is_wp_error( $response ) || ! isset( $response['response']['code'] ) ) {
+			return '';
+		}
+
+		return $response['response']['code'];
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+	function wp_remote_retrieve_body( $response ) {
+		if ( is_wp_error( $response ) || ! isset( $response['body'] ) ) {
+			return '';
+		}
+
+		return $response['body'];
+	}
+}
+
+if ( ! function_exists( 'get_site_transient' ) ) {
+	function get_site_transient( $name ) {
+		return $GLOBALS['__wp_site_transients'][ $name ] ?? false;
+	}
+}
+
 function wp_shims_reset(): void {
 	$GLOBALS['__wp_actions']          = array();
 	$GLOBALS['__wp_options']          = array();
 	$GLOBALS['__wp_hooks']            = array();
 	$GLOBALS['__wp_filter_overrides'] = array();
 	$GLOBALS['__wp_user_can']         = true;
+	$GLOBALS['__wp_http_requests']    = array();
+	$GLOBALS['__wp_http_queue']       = array();
+	$GLOBALS['__wp_site_transients']  = array();
 }

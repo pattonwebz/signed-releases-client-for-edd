@@ -74,4 +74,60 @@ final class TrustedCommentTest extends TestCase {
 		$this->expectException( VerificationException::class );
 		$comment->assertMatches( 'sample-plugin', null );
 	}
+
+	public function testEmptyCommentParsesAndFailsMatchWithMissingMarker(): void {
+		$comment = TrustedComment::parse( '' );
+
+		$this->assertSame( '', $comment->raw() );
+		$this->assertNull( $comment->get( 'slug' ) );
+
+		try {
+			$comment->assertMatches( 'sample-plugin', null );
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::COMMENT_MISMATCH, $e->errorCode() );
+			$this->assertStringContainsString( '(missing)', $e->getMessage() );
+		}
+	}
+
+	public function testValuelessTokenParsesAsEmptyStringNotNull(): void {
+		// 'version:' with no value is a PRESENT-but-empty field. The guard
+		// depends on the distinction: '' routes to missing_version, while a
+		// null would mean the token wasn't there at all.
+		$comment = TrustedComment::parse( 'slug:sample-plugin version:' );
+
+		$this->assertSame( '', $comment->get( 'version' ) );
+		$this->assertNotNull( $comment->get( 'version' ) );
+	}
+
+	public function testTokenStartingWithColonIsIgnored(): void {
+		// ':value' has no key; it must not create a field keyed ''.
+		$comment = TrustedComment::parse( ':orphan slug:sample-plugin' );
+
+		$this->assertNull( $comment->get( '' ) );
+		$this->assertSame( 'sample-plugin', $comment->get( 'slug' ) );
+	}
+
+	public function testTabAndMultiSpaceSeparatorsSplitTokens(): void {
+		$comment = TrustedComment::parse( "slug:sample-plugin\tversion:1.2.3   signed:2026-07-15T00:00:00Z" );
+
+		$this->assertSame( 'sample-plugin', $comment->get( 'slug' ) );
+		$this->assertSame( '1.2.3', $comment->get( 'version' ) );
+		$this->assertSame( '2026-07-15T00:00:00Z', $comment->get( 'signed' ) );
+	}
+
+	public function testVersionMatchIsStrictStringInequalityNotVersionCompare(): void {
+		// assertMatches() pins the exact signed string: '01.2.3' is the same
+		// release as '1.2.3' to version_compare(), but NOT to the comment
+		// binding — normalisation games must not slip past the match.
+		$comment = TrustedComment::parse( 'slug:sample-plugin version:01.2.3' );
+
+		try {
+			$comment->assertMatches( 'sample-plugin', '1.2.3' );
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::COMMENT_MISMATCH, $e->errorCode() );
+			$this->assertStringContainsString( '01.2.3', $e->getMessage() );
+		}
+	}
 }

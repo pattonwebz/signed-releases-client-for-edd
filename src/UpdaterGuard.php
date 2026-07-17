@@ -81,14 +81,17 @@ final class UpdaterGuard {
 	 *     @type string   $store_url        Required. EDD store URL.
 	 *     @type string[] $public_keys      Required. minisign.pub file contents (or bare base64 lines).
 	 *     @type int      $item_id          Optional. EDD download ID, passed to the signature endpoint.
-	 *     @type string   $current_version  Optional in name, effectively required in practice: the
-	 *                                      installed plugin version, used as the downgrade floor. Omit
-	 *                                      it and a fresh install has NO floor until the first verified
-	 *                                      update records a high-water mark — a compromised store could
-	 *                                      walk that install up to any validly-signed release at or
-	 *                                      above zero, including a known-vulnerable one, before the
-	 *                                      ratchet engages. Pass `get_plugin_data( PLUGIN_FILE )['Version']`
-	 *                                      if you don't already have the version handy.
+	 *     @type string   $current_version  Required in enforce mode; strongly recommended otherwise.
+	 *                                      The installed plugin version, used as the downgrade floor.
+	 *                                      Omit it and a fresh install has NO floor until the first
+	 *                                      verified update records a high-water mark — a compromised
+	 *                                      store could walk that install up to any validly-signed
+	 *                                      release at or above zero, including a known-vulnerable one,
+	 *                                      before the ratchet engages. Because that floor is the whole
+	 *                                      enforce-mode guarantee, constructing an enforce-mode guard
+	 *                                      without it throws (register() then fails closed). Pass
+	 *                                      `get_plugin_data( PLUGIN_FILE )['Version']` if you don't
+	 *                                      already have the version handy.
 	 *     @type string   $mode             Optional. off|log|enforce. Default log.
 	 *     @type callable $downloader        Optional. Test/DI override.
 	 *     @type callable $signature_fetcher Optional. Test/DI override.
@@ -120,6 +123,22 @@ final class UpdaterGuard {
 		$this->verifier = new MinisignVerifier( $keys );
 
 		$this->policy = new VerificationPolicy( $args['mode'] ?? VerificationPolicy::MODE_LOG );
+
+		// The entire enforce-mode guarantee reduces to the downgrade floor,
+		// and the installed version is its one input a compromised store
+		// can't influence and a reset option can't erase. Configuring enforce
+		// without it is a silent no-floor window on a fresh install — a
+		// compromised store could walk the site up to any validly-signed
+		// (possibly vulnerable) release before the ratchet engages. Treat it
+		// as a hard misconfiguration: register() catches this and fails
+		// closed (blocks this plugin's updates) rather than enforcing with no
+		// floor. Runtime raises to enforce via the kill switch are caught in
+		// interceptDownload() instead, where the effective mode is known.
+		if ( $this->policy->shouldBlock() && null === $this->currentVersion ) {
+			throw new \InvalidArgumentException(
+				"UpdaterGuard requires 'current_version' in enforce mode: without the installed version there is no downgrade floor on a fresh install. Pass get_plugin_data( PLUGIN_FILE )['Version']."
+			);
+		}
 
 		$this->downloader       = $args['downloader'] ?? array( $this, 'defaultDownloader' );
 		$this->signatureFetcher = $args['signature_fetcher'] ?? array( $this, 'defaultSignatureFetcher' );
@@ -259,6 +278,28 @@ final class UpdaterGuard {
 			|| ! is_array( $hook_extra )
 			|| ( $hook_extra['plugin'] ?? null ) !== $this->pluginFile ) {
 			return $reply;
+		}
+
+		// Enforce with no installed-version floor is unsafe (see the
+		// constructor). The constructor rejects a statically-configured
+		// enforce mode without current_version; this covers the mode being
+		// raised to enforce at runtime by the kill-switch filter, where the
+		// constructor never saw it. Fail closed rather than enforce with no
+		// downgrade floor.
+		if ( $policy->shouldBlock() && null === $this->currentVersion ) {
+			call_user_func(
+				$this->logger,
+				'error',
+				sprintf(
+					'[signed-releases] %s: enforce mode active without current_version; blocking update (no downgrade floor).',
+					$this->slug
+				)
+			);
+
+			return new \WP_Error(
+				'pattonwebz_signed_releases_no_floor',
+				__( 'Update blocked: signature enforcement is on but the installed version was not supplied, so there is no downgrade floor. Pass current_version to the verifier.', 'pattonwebz-signed-releases' )
+			);
 		}
 
 		// $reply may already be a file from an earlier upgrader_pre_download
@@ -517,7 +558,14 @@ final class UpdaterGuard {
 			return;
 		}
 
-		$seen    = get_option( self::OPTION_SEEN, array() );
+		$seen = get_option( self::OPTION_SEEN, array() );
+
+		// A scalar here (another plugin, WP-CLI, a bad migration) would corrupt
+		// the stored value or silently drop the ratchet write; start fresh instead.
+		if ( ! is_array( $seen ) ) {
+			$seen = array();
+		}
+
 		$current = ( isset( $seen[ $this->slug ] ) && is_string( $seen[ $this->slug ] ) ) ? $seen[ $this->slug ] : null;
 
 		if ( null === $current || version_compare( $version, $current, '>' ) ) {
@@ -586,6 +634,10 @@ final class UpdaterGuard {
 		}
 
 		$failures = get_option( self::OPTION_FAILURES, array() );
+
+		if ( ! is_array( $failures ) ) {
+			$failures = array();
+		}
 
 		$failures[ $this->slug ] = array(
 			'code'    => $e->errorCode(),

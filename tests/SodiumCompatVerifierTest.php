@@ -15,6 +15,8 @@ use PattonWebz\SignedReleases\MinisignVerifier;
 final class SodiumCompatVerifierTest extends MinisignVerifierTest {
 
 	protected function setUp(): void {
+		parent::setUp();
+
 		// Without this, sodium_compat silently delegates to ext-sodium when
 		// it's loaded and we'd only be testing the native path twice.
 		ParagonIE_Sodium_Compat::$disableFallbackForUnitTests = true;
@@ -22,6 +24,8 @@ final class SodiumCompatVerifierTest extends MinisignVerifierTest {
 
 	protected function tearDown(): void {
 		ParagonIE_Sodium_Compat::$disableFallbackForUnitTests = false;
+
+		parent::tearDown();
 	}
 
 	protected function makeVerifier( array $keys ): MinisignVerifier {

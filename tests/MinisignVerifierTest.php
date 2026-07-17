@@ -12,6 +12,8 @@ use PHPUnit\Framework\TestCase;
 
 class MinisignVerifierTest extends TestCase {
 
+	use InTestSigner;
+
 	protected function fixture( string $name ): string {
 		return PATTONWEBZ_TEST_FIXTURES . '/' . $name;
 	}
@@ -70,6 +72,14 @@ class MinisignVerifierTest extends TestCase {
 			$this->fail( 'Expected VerificationException.' );
 		} catch ( VerificationException $e ) {
 			$this->assertSame( VerificationException::NO_MATCHING_KEY, $e->errorCode() );
+
+			// The message names the unknown key in minisign's own hex display
+			// form so an operator can match it against key inventory. This is
+			// also the only caller of Signature::keyIdHex().
+			$this->assertStringContainsString(
+				$this->key( 'otherkey.pub' )->keyIdHex(),
+				$e->getMessage()
+			);
 		}
 	}
 
@@ -116,8 +126,14 @@ class MinisignVerifierTest extends TestCase {
 			$this->signature( 'slug-mismatch.minisig' )
 		);
 
-		$this->expectException( VerificationException::class );
-		$comment->assertMatches( 'sample-plugin', '1.2.3' );
+		try {
+			$comment->assertMatches( 'sample-plugin', '1.2.3' );
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::COMMENT_MISMATCH, $e->errorCode() );
+			$this->assertStringContainsString( 'evil-plugin', $e->getMessage() );
+			$this->assertStringContainsString( 'sample-plugin', $e->getMessage() );
+		}
 	}
 
 	public function testMultipleTrustedKeysSelectsByKeyId(): void {
@@ -157,26 +173,130 @@ class MinisignVerifierTest extends TestCase {
 		$this->makeVerifier( array() );
 	}
 
-	public function testLegacySignatureIsRejectedAtParseTimeNotVerification(): void {
-		// The legacy (raw-content) algorithm is rejected by Signature::fromMinisigText()
-		// itself (see SignatureTest), so it can never reach the verifier — the
-		// attacker-selectable whole-file-read DoS this used to enable is closed
-		// upstream of MinisignVerifier entirely.
-		$keypair = sodium_crypto_sign_keypair();
-		$sk      = sodium_crypto_sign_secretkey( $keypair );
-		$key_id  = random_bytes( 8 );
-		$data    = 'legacy signed content';
-		$comment = 'slug:legacy-plugin version:0.1.0';
+	public function testVerifyStringMatchesVerifyFileOnValidData(): void {
+		$verifier = $this->makeVerifier( array( $this->key() ) );
+		$sig      = $this->signature( 'sample-plugin-1.2.3.zip.minisig' );
 
-		$sig        = sodium_crypto_sign_detached( $data, $sk );
-		$global_sig = sodium_crypto_sign_detached( $sig . $comment, $sk );
+		$comment = $verifier->verifyString(
+			file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip' ) ),
+			$sig
+		);
 
-		$minisig = "untrusted comment: legacy test\n"
-			. base64_encode( 'Ed' . $key_id . $sig ) . "\n"
-			. 'trusted comment: ' . $comment . "\n"
-			. base64_encode( $global_sig ) . "\n";
+		$this->assertSame( 'sample-plugin', $comment->get( 'slug' ) );
+		$this->assertSame( '1.2.3', $comment->get( 'version' ) );
 
-		$this->expectException( VerificationException::class );
-		Signature::fromMinisigText( $minisig );
+		// Same authenticated comment as the streaming file path.
+		$file_comment = $verifier->verifyFile( $this->fixture( 'sample-plugin-1.2.3.zip' ), $sig );
+		$this->assertSame( $file_comment->raw(), $comment->raw() );
+	}
+
+	public function testVerifyStringRejectsTamperedBytes(): void {
+		$verifier = $this->makeVerifier( array( $this->key() ) );
+		$data     = file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip' ) );
+		$data[100] = chr( ord( $data[100] ) ^ 0xFF );
+
+		try {
+			$verifier->verifyString( $data, $this->signature( 'sample-plugin-1.2.3.zip.minisig' ) );
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::BAD_SIGNATURE, $e->errorCode() );
+		}
+	}
+
+	public function testSplicedTrustedCommentAndGlobalSignatureRejected(): void {
+		// Splice attack: keep the genuine untrusted comment + file signature
+		// (lines 1-2 from the real testkey minisig, so the key ID matches and
+		// the file check passes), but graft on another signature's trusted
+		// comment + global signature (lines 3-4 from wrong-key.minisig). The
+		// global signature cannot verify under the testkey — the trusted
+		// comment is not authenticated and must be rejected.
+		$good  = preg_split( '/\R/', file_get_contents( $this->fixture( 'sample-plugin-1.2.3.zip.minisig' ) ) );
+		$other = preg_split( '/\R/', file_get_contents( $this->fixture( 'wrong-key.minisig' ) ) );
+
+		$spliced = implode( "\n", array( $good[0], $good[1], $other[2], $other[3] ) );
+
+		$verifier = $this->makeVerifier( array( $this->key() ) );
+
+		try {
+			$verifier->verifyFile(
+				$this->fixture( 'sample-plugin-1.2.3.zip' ),
+				Signature::fromMinisigText( $spliced )
+			);
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::BAD_GLOBAL_SIGNATURE, $e->errorCode() );
+		}
+	}
+
+	public function testEmptyFileVerifiesAndMatchesVerifyString(): void {
+		// Zero-byte input is a valid message: the prehash of '' signs fine
+		// and the empty-chunk guard in hashFileContents must not break it.
+		$keypair = $this->makeSignerKeypair();
+		$minisig = $this->signMinisig( $keypair, '', 'slug:empty-plugin version:0.0.1' );
+
+		$verifier = $this->makeVerifier( array( PublicKey::fromBase64( $keypair['public_b64'] ) ) );
+		$sig      = Signature::fromMinisigText( $minisig );
+
+		$tmp = tempnam( sys_get_temp_dir(), 'sig-test-empty-' );
+
+		try {
+			$file_comment   = $verifier->verifyFile( $tmp, $sig );
+			$string_comment = $verifier->verifyString( '', $sig );
+
+			$this->assertSame( 'empty-plugin', $file_comment->get( 'slug' ) );
+			$this->assertSame( $string_comment->raw(), $file_comment->raw() );
+		} finally {
+			unlink( $tmp );
+		}
+	}
+
+	public function testMultiChunkFileVerifiesAndMatchesVerifyString(): void {
+		// ~200 KB forces several 64 KiB fread/hashUpdate iterations, proving
+		// the streamed prehash equals the one-shot prehash of the same bytes.
+		$keypair = $this->makeSignerKeypair();
+		$data    = str_repeat( "multi-chunk payload\n", 10000 ); // 200,000 bytes.
+		$minisig = $this->signMinisig( $keypair, $data, 'slug:big-plugin version:2.0.0' );
+
+		$verifier = $this->makeVerifier( array( PublicKey::fromBase64( $keypair['public_b64'] ) ) );
+		$sig      = Signature::fromMinisigText( $minisig );
+
+		$tmp = tempnam( sys_get_temp_dir(), 'sig-test-big-' );
+		file_put_contents( $tmp, $data );
+
+		try {
+			$file_comment   = $verifier->verifyFile( $tmp, $sig );
+			$string_comment = $verifier->verifyString( $data, $sig );
+
+			$this->assertSame( 'big-plugin', $file_comment->get( 'slug' ) );
+			$this->assertSame( $string_comment->raw(), $file_comment->raw() );
+		} finally {
+			unlink( $tmp );
+		}
+	}
+
+	public function testDirectoryPathThrowsUnreadable(): void {
+		// fopen() on a directory succeeds on Linux, so this failure surfaces
+		// mid-loop when fread() returns false — the second UNREADABLE throw
+		// site. PHP raises E_NOTICE/E_WARNING on that fread; absorb it so the
+		// suite's failOnWarning doesn't mask the exception under test.
+		$verifier = $this->makeVerifier( array( $this->key() ) );
+
+		set_error_handler(
+			static function (): bool {
+				return true;
+			}
+		);
+
+		try {
+			$verifier->verifyFile(
+				sys_get_temp_dir(),
+				$this->signature( 'sample-plugin-1.2.3.zip.minisig' )
+			);
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::UNREADABLE, $e->errorCode() );
+		} finally {
+			restore_error_handler();
+		}
 	}
 }
