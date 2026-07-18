@@ -20,11 +20,23 @@ class MinisignVerifier {
 	/** @var array<string, PublicKey> Keyed by raw 8-byte key ID. */
 	private array $keys = array();
 
+	/** @var callable(string $key_id_hex): bool|null Revocation check; null = feature unused. */
+	private $isRevoked;
+
 	/**
-	 * @param PublicKey[] $public_keys Trusted keys. Multiple keys allow rotation:
-	 *                                 the signature's key ID selects which is used.
+	 * @param PublicKey[]   $public_keys Trusted keys. Multiple keys allow rotation:
+	 *                                   the signature's key ID selects which is used.
+	 * @param callable|null $is_revoked  Optional revocation check, called with the
+	 *                                   signature's hex key ID before that key is
+	 *                                   used. Returning true fails the candidate
+	 *                                   with REVOKED_KEY — the key stays pinned in
+	 *                                   $public_keys but drops out of the effective
+	 *                                   trust set, so any other pinned key (the
+	 *                                   standing successor) still verifies as
+	 *                                   normal. Policy (log vs enforce) lives in
+	 *                                   the callable, not here.
 	 */
-	public function __construct( array $public_keys ) {
+	public function __construct( array $public_keys, ?callable $is_revoked = null ) {
 		foreach ( $public_keys as $key ) {
 			$this->keys[ $key->keyId() ] = $key;
 		}
@@ -32,6 +44,8 @@ class MinisignVerifier {
 		if ( empty( $this->keys ) ) {
 			throw new \InvalidArgumentException( 'At least one trusted public key is required.' );
 		}
+
+		$this->isRevoked = $is_revoked;
 	}
 
 	/**
@@ -92,6 +106,16 @@ class MinisignVerifier {
 				VerificationException::NO_MATCHING_KEY,
 				sprintf(
 					'Signature was made with key %s, which is not in the trusted key set.',
+					$signature->keyIdHex()
+				)
+			);
+		}
+
+		if ( null !== $this->isRevoked && call_user_func( $this->isRevoked, $signature->keyIdHex() ) ) {
+			throw VerificationException::withCode(
+				VerificationException::REVOKED_KEY,
+				sprintf(
+					'Signature was made with key %s, which has been revoked.',
 					$signature->keyIdHex()
 				)
 			);

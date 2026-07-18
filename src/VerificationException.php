@@ -19,6 +19,7 @@ final class VerificationException extends \RuntimeException {
 	public const MISSING_VERSION      = 'missing_version';
 	public const DOWNGRADE            = 'downgrade';
 	public const CRYPTO_UNAVAILABLE   = 'crypto_unavailable';
+	public const REVOKED_KEY          = 'revoked_key';
 
 	private string $errorCode;
 

@@ -22,6 +22,16 @@
  *
  * A missing signature is treated exactly like an invalid one — otherwise
  * stripping the signature would bypass verification entirely.
+ *
+ * Key revocation (optional; active when `revocation_root_key` is configured):
+ * alongside the signature fetch, the guard fetches the store's revocation
+ * manifest (?edd_action=get_revocation_manifest), verifies it against the
+ * pinned revocation root key — a separate trust root that never signs
+ * packages — and merges it into a durable append-only cache. Signatures made
+ * by a revoked key then fail with REVOKED_KEY exactly like an untrusted key
+ * would, while every other pinned key (the standing successor) keeps
+ * verifying. A failed manifest fetch is silent by design: revocation state
+ * is monotonic, so a stale cache is never wrong, only possibly incomplete.
  */
 
 declare(strict_types=1);
@@ -34,9 +44,11 @@ final class UpdaterGuard {
 	 * COMPATIBILITY CONTRACT — this package ships un-prefixed in several
 	 * plugins at once and the first-loaded copy serves them all. These
 	 * option names, their slug-keyed array shapes, and the
-	 * pattonwebz_signed_releases_{mode,verified,failure} hook signatures
-	 * are frozen: changing any of them within a major version breaks
-	 * co-installed plugins running another copy. See README.
+	 * pattonwebz_signed_releases_{mode,revocation_mode,verified,failure}
+	 * hook signatures are frozen: changing any of them within a major
+	 * version breaks co-installed plugins running another copy. The same
+	 * applies to RevocationList::OPTION_REVOCATIONS and its shape. See
+	 * README.
 	 */
 	public const OPTION_FAILURES = 'pattonwebz_signed_releases_failures';
 
@@ -45,6 +57,15 @@ final class UpdaterGuard {
 
 	/** A .minisig is well under 1 KB; anything bigger is not a signature. */
 	private const MAX_SIGNATURE_BYTES = 8192;
+
+	/**
+	 * A revocation-manifest envelope (manifest JSON + its .minisig) for a
+	 * shop's worth of keys fits in a few KB; anything bigger is not one.
+	 */
+	private const MAX_MANIFEST_BYTES = 16384;
+
+	/** The envelope format the manifest endpoint serves. */
+	private const MANIFEST_ENVELOPE_FORMAT = 'pattonwebz-revocation-envelope-v1';
 
 	/** Plugin basename, e.g. "my-plugin/my-plugin.php". */
 	private string $pluginFile;
@@ -61,6 +82,25 @@ final class UpdaterGuard {
 	private MinisignVerifier $verifier;
 
 	private VerificationPolicy $policy;
+
+	/** Verifies revocation manifests; null when revocation is not configured. */
+	private ?MinisignVerifier $rootVerifier = null;
+
+	/** Configured rollout mode for revocation checking, independent of $policy. */
+	private VerificationPolicy $revocationPolicy;
+
+	private RevocationList $revocations;
+
+	/**
+	 * Whether a revoked-key match should fail verification during the current
+	 * interceptDownload() pass. Set per pass from the (filterable) revocation
+	 * mode: in log mode a match is logged and the key stays effective, so the
+	 * mechanism can soak before it is allowed to fail-close anything.
+	 */
+	private bool $revocationEnforcing = false;
+
+	/** @var callable(): ?string Fetch the manifest-envelope body from the store. */
+	private $revocationFetcher;
 
 	/** @var callable(string $url): string|\WP_Error Download URL to local temp file. */
 	private $downloader;
@@ -93,8 +133,21 @@ final class UpdaterGuard {
 	 *                                      `get_plugin_data( PLUGIN_FILE )['Version']` if you don't
 	 *                                      already have the version handy.
 	 *     @type string   $mode             Optional. off|log|enforce. Default log.
+	 *     @type string   $revocation_root_key Optional. The pinned revocation root
+	 *                                      public key (minisign.pub contents or bare
+	 *                                      base64). Enables revocation checking.
+	 *                                      Deliberately separate from public_keys:
+	 *                                      the root signs only revocation manifests,
+	 *                                      never packages, so a stolen root cannot
+	 *                                      sign malware — it can only subtract trust.
+	 *     @type string   $revocation_mode  Optional. off|log|enforce for revocation
+	 *                                      checking specifically, independent of
+	 *                                      $mode. Default log: a mechanism able to
+	 *                                      fail-close the fleet gets its own
+	 *                                      log-before-enforce rollout.
 	 *     @type callable $downloader        Optional. Test/DI override.
 	 *     @type callable $signature_fetcher Optional. Test/DI override.
+	 *     @type callable $revocation_fetcher Optional. Test/DI override.
 	 *     @type callable $update_resolver   Optional. Test/DI override.
 	 *     @type callable $logger            Optional. Test/DI override.
 	 * }
@@ -116,11 +169,58 @@ final class UpdaterGuard {
 
 		$keys = array();
 		foreach ( (array) $args['public_keys'] as $key_text ) {
-			$keys[] = false !== strpos( $key_text, "\n" ) || 0 === strpos( $key_text, 'untrusted' )
-				? PublicKey::fromFileText( $key_text )
-				: PublicKey::fromBase64( $key_text );
+			$keys[] = self::parseKeyText( $key_text );
 		}
-		$this->verifier = new MinisignVerifier( $keys );
+
+		$this->revocationPolicy = new VerificationPolicy( $args['revocation_mode'] ?? VerificationPolicy::MODE_LOG );
+
+		$root_key_text = $args['revocation_root_key'] ?? null;
+
+		if ( is_string( $root_key_text ) && '' !== $root_key_text ) {
+			// A separate verifier holding ONLY the root: a manifest signed by a
+			// package key is rejected, and the root never verifies a package.
+			// The root itself is not revocable — replacing a compromised root
+			// is a normal release updating this pinned value.
+			$root_key           = self::parseKeyText( $root_key_text );
+			$this->rootVerifier = new MinisignVerifier( array( $root_key ) );
+
+			// Scope the shared revocation cache to THIS root's full public key,
+			// so a co-installed plugin pinning a different root can't poison
+			// our trust set (cross-vendor DoS); same-shop guards pin the same
+			// root and so share the same bucket, as designed.
+			$this->revocations = new RevocationList( strtoupper( bin2hex( $root_key->raw() ) ) );
+
+			$this->verifier = new MinisignVerifier(
+				$keys,
+				function ( string $key_id_hex ): bool {
+					if ( ! $this->revocations->isRevoked( $key_id_hex ) ) {
+						return false;
+					}
+
+					if ( $this->revocationEnforcing ) {
+						return true;
+					}
+
+					// Log-only soak: record the match, keep the key effective.
+					call_user_func(
+						$this->logger,
+						'warning',
+						sprintf(
+							'[signed-releases] %s: key %s is revoked; allowing anyway because revocation checking is in log mode (would block in enforce).',
+							$this->slug,
+							$key_id_hex
+						)
+					);
+
+					return false;
+				}
+			);
+		} else {
+			// No pinned root: revocation is inert (isRevoked is never
+			// consulted), so the default-scoped list is harmless.
+			$this->revocations = new RevocationList();
+			$this->verifier    = new MinisignVerifier( $keys );
+		}
 
 		$this->policy = new VerificationPolicy( $args['mode'] ?? VerificationPolicy::MODE_LOG );
 
@@ -140,10 +240,21 @@ final class UpdaterGuard {
 			);
 		}
 
-		$this->downloader       = $args['downloader'] ?? array( $this, 'defaultDownloader' );
-		$this->signatureFetcher = $args['signature_fetcher'] ?? array( $this, 'defaultSignatureFetcher' );
-		$this->updateResolver   = $args['update_resolver'] ?? array( $this, 'defaultUpdateResolver' );
-		$this->logger           = $args['logger'] ?? array( $this, 'defaultLogger' );
+		$this->downloader        = $args['downloader'] ?? array( $this, 'defaultDownloader' );
+		$this->signatureFetcher  = $args['signature_fetcher'] ?? array( $this, 'defaultSignatureFetcher' );
+		$this->revocationFetcher = $args['revocation_fetcher'] ?? array( $this, 'defaultRevocationFetcher' );
+		$this->updateResolver    = $args['update_resolver'] ?? array( $this, 'defaultUpdateResolver' );
+		$this->logger            = $args['logger'] ?? array( $this, 'defaultLogger' );
+	}
+
+	/**
+	 * Parse a configured public key in either accepted form (full minisign.pub
+	 * file text, or the bare base64 line).
+	 */
+	private static function parseKeyText( string $key_text ): PublicKey {
+		return false !== strpos( $key_text, "\n" ) || 0 === strpos( $key_text, 'untrusted' )
+			? PublicKey::fromFileText( $key_text )
+			: PublicKey::fromBase64( $key_text );
 	}
 
 	/**
@@ -272,20 +383,40 @@ final class UpdaterGuard {
 			);
 		}
 
-		// Not our plugin (or verification disabled): never disturb another
-		// callback's reply.
-		if ( $policy->isOff()
-			|| ! is_array( $hook_extra )
+		// Not our plugin: never disturb another callback's reply. Checked
+		// before the mode gate and independent of it — mode governs how we act
+		// on our OWN plugin, never whether to touch another's.
+		if ( ! is_array( $hook_extra )
 			|| ( $hook_extra['plugin'] ?? null ) !== $this->pluginFile ) {
 			return $reply;
 		}
 
-		// Enforce with no installed-version floor is unsafe (see the
-		// constructor). The constructor rejects a statically-configured
+		// Refresh the revocation cache and fix this pass's revocation posture
+		// FIRST, and independently of the main mode. Revocation is its own
+		// log->enforce switch (README): revocation_mode=enforce must block a
+		// stolen key even while package verification is still in log — or off
+		// — mode, or the whole point of a separate revocation rollout is lost.
+		// Runs before any signature is tried so a manifest revoking the
+		// offering key applies to this very update. No-op (and no fetch) when
+		// revocation isn't configured; failures inside are silent-safe.
+		$this->prepareRevocations();
+
+		// With the revocation posture known, decide whether there is anything
+		// to do. Main mode off AND revocation not enforcing → nothing to
+		// check; pass the reply through untouched. If revocation IS enforcing
+		// we proceed even under main-off, precisely to catch a revoked key.
+		if ( $policy->isOff() && ! $this->revocationEnforcing ) {
+			return $reply;
+		}
+
+		// Enforce (main mode) with no installed-version floor is unsafe (see
+		// the constructor). The constructor rejects a statically-configured
 		// enforce mode without current_version; this covers the mode being
 		// raised to enforce at runtime by the kill-switch filter, where the
 		// constructor never saw it. Fail closed rather than enforce with no
-		// downgrade floor.
+		// downgrade floor. (Revocation-only enforcement under main-off/log
+		// doesn't consult the floor, so this gate stays keyed to the main
+		// policy.)
 		if ( $policy->shouldBlock() && null === $this->currentVersion ) {
 			call_user_func(
 				$this->logger,
@@ -329,7 +460,25 @@ final class UpdaterGuard {
 		try {
 			list( $comment, $signed_version ) = $this->verifyAgainstCandidates( $file, $update, $expected );
 		} catch ( VerificationException $e ) {
-			return $this->handleFailure( $e, $policy, $package, $file, $downloaded );
+			// A REVOKED_KEY failure is governed by the REVOCATION policy, not
+			// the main one — and the verifier only ever throws it when
+			// revocation is enforcing (log mode logs and lets the key stand),
+			// so this failure always blocks regardless of the main mode. Every
+			// other failure is governed by the main package-verification
+			// policy as before.
+			//
+			// verifyAgainstCandidates() rethrows the FIRST candidate's failure,
+			// so a REVOKED_KEY on a later candidate can be masked by an earlier
+			// non-revoked failure — but only under main log/off, which already
+			// fail open on any failure, so this concedes nothing an attacker
+			// couldn't get anyway. The hard guarantee (a signature by a revoked
+			// key never *verifies*) lives in MinisignVerifier and is
+			// unconditional; this branch only governs how a failure is reported.
+			$governing = VerificationException::REVOKED_KEY === $e->errorCode()
+				? new VerificationPolicy( VerificationPolicy::MODE_ENFORCE )
+				: $policy;
+
+			return $this->handleFailure( $e, $governing, $package, $file, $downloaded );
 		}
 
 		if ( null !== $expected && '' !== $expected && $signed_version !== $expected ) {
@@ -470,6 +619,151 @@ final class UpdaterGuard {
 
 		if ( is_string( $current ) && '' !== $current ) {
 			yield $current;
+		}
+	}
+
+	/**
+	 * Decide this pass's revocation posture and refresh the cached list.
+	 *
+	 * The revocation mode is filterable at runtime like the main mode (and
+	 * with the same invalid-value fallback discipline): revocation is a
+	 * mechanism that can fail-close the whole fleet, so it gets its own
+	 * log-before-enforce rollout and its own kill switch, independent of
+	 * whether package verification itself is enforcing.
+	 */
+	private function prepareRevocations(): void {
+		$this->revocationEnforcing = false;
+
+		if ( null === $this->rootVerifier ) {
+			return; // No pinned root — the feature does not exist for this guard.
+		}
+
+		$mode = apply_filters( 'pattonwebz_signed_releases_revocation_mode', $this->revocationPolicy->mode(), $this->slug );
+
+		try {
+			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
+		} catch ( \Throwable $e ) {
+			$policy = $this->revocationPolicy;
+
+			call_user_func(
+				$this->logger,
+				'warning',
+				sprintf(
+					'[signed-releases] %s: pattonwebz_signed_releases_revocation_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					$this->slug,
+					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
+					$this->revocationPolicy->mode()
+				)
+			);
+		}
+
+		if ( $policy->isOff() ) {
+			return;
+		}
+
+		$this->revocationEnforcing = $policy->shouldBlock();
+		$this->refreshRevocations();
+	}
+
+	/**
+	 * Fetch, root-verify, and merge the store's revocation manifest.
+	 *
+	 * Every failure path here is deliberately silent-safe (logged, never
+	 * surfaced, never blocking): revocation state is monotonic, so keeping
+	 * the existing cache and proceeding is exactly as correct as if the
+	 * fetch had returned the same manifest again. Silence is only unsafe
+	 * for claims that go stale — revocations never do.
+	 */
+	private function refreshRevocations(): void {
+		try {
+			$body = call_user_func( $this->revocationFetcher );
+
+			if ( ! is_string( $body ) || '' === $body ) {
+				call_user_func(
+					$this->logger,
+					'info',
+					sprintf( '[signed-releases] %s: revocation manifest unavailable from the store; keeping the cached list.', $this->slug )
+				);
+
+				return;
+			}
+
+			$envelope = json_decode( $body, true, 4 );
+
+			if ( ! is_array( $envelope )
+				|| self::MANIFEST_ENVELOPE_FORMAT !== ( $envelope['format'] ?? null )
+				|| ! is_string( $envelope['manifest'] ?? null )
+				|| ! is_string( $envelope['minisig'] ?? null ) ) {
+				call_user_func(
+					$this->logger,
+					'info',
+					sprintf( '[signed-releases] %s: revocation manifest response was not a recognised envelope; keeping the cached list.', $this->slug )
+				);
+
+				return;
+			}
+
+			// Root signature first, over the exact manifest bytes; only then
+			// parse. The store is an untrusted pipe — the pinned root is what
+			// makes these bytes mean anything.
+			$signature = Signature::fromMinisigText( $envelope['minisig'] );
+			$comment   = $this->rootVerifier->verifyString( $envelope['manifest'], $signature );
+			$manifest  = RevocationManifest::fromJson( $envelope['manifest'] );
+
+			// The trusted comment mirrors the sequence for cheap sanity
+			// checking; the signed JSON body is authoritative on any mismatch.
+			$mirrored = $comment->get( 'sequence' );
+
+			if ( null !== $mirrored && (string) $manifest->sequence() !== $mirrored ) {
+				call_user_func(
+					$this->logger,
+					'warning',
+					sprintf(
+						'[signed-releases] %s: revocation manifest trusted-comment sequence (%s) disagrees with the signed body (%d); trusting the body.',
+						$this->slug,
+						$mirrored,
+						$manifest->sequence()
+					)
+				);
+			}
+
+			$outcome = $this->revocations->apply( $manifest );
+
+			if ( RevocationList::APPLY_ACCEPTED === $outcome ) {
+				call_user_func(
+					$this->logger,
+					'info',
+					sprintf(
+						'[signed-releases] %s: accepted revocation manifest sequence %d (%d key(s) revoked).',
+						$this->slug,
+						$manifest->sequence(),
+						count( $this->revocations->revokedKeys() )
+					)
+				);
+			} elseif ( RevocationList::APPLY_ROLLBACK === $outcome ) {
+				// A validly-root-signed but older manifest: a replay (or a
+				// hostile store re-serving history). Never regress the cache.
+				call_user_func(
+					$this->logger,
+					'warning',
+					sprintf(
+						'[signed-releases] %s: revocation_manifest_rollback — store served manifest sequence %d but this site has already accepted %d; ignoring it.',
+						$this->slug,
+						$manifest->sequence(),
+						$this->revocations->sequence()
+					)
+				);
+			}
+		} catch ( \Throwable $e ) {
+			call_user_func(
+				$this->logger,
+				'info',
+				sprintf(
+					'[signed-releases] %s: revocation manifest rejected (%s); keeping the cached list.',
+					$this->slug,
+					$e->getMessage()
+				)
+			);
 		}
 	}
 
@@ -720,6 +1014,27 @@ final class UpdaterGuard {
 			array(
 				'timeout'             => 15,
 				'limit_response_size' => self::MAX_SIGNATURE_BYTES,
+			)
+		);
+
+		if ( is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
+			return null;
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+
+		return '' !== $body ? $body : null;
+	}
+
+	private function defaultRevocationFetcher(): ?string {
+		// Store-wide, not per-product: one manifest covers every key the shop
+		// signs with, so no slug/item_id parameters. Same untrusted-store
+		// posture as the signature fetch: safe redirects and a hard size cap.
+		$response = wp_safe_remote_get(
+			add_query_arg( array( 'edd_action' => 'get_revocation_manifest' ), $this->storeUrl ),
+			array(
+				'timeout'             => 15,
+				'limit_response_size' => self::MAX_MANIFEST_BYTES,
 			)
 		);
 

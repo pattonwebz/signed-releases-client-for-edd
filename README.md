@@ -21,6 +21,10 @@ Signed Releases for EDD store extension, which serves the signatures.
 - **Zero production dependencies** — plain PSR-4 PHP.
 - **Staged rollout** — `log` mode observes without blocking; `enforce`
   blocks; a runtime filter is the kill switch.
+- **Key revocation** (optional) — a store-served, root-signed revocation
+  manifest locks out a stolen signing key while every other pinned key
+  (your pre-staged successor) keeps verifying. Append-only on the client
+  with its own log-before-enforce rollout.
 
 ## Requirements
 
@@ -83,6 +87,44 @@ all of them:
 add_filter( 'pattonwebz_signed_releases_mode', fn( $mode, $slug ) => 'log', 10, 2 );
 ```
 
+### Key revocation
+
+Pin the revocation root key alongside your package keys to enable it:
+
+```php
+UpdaterGuard::register( array(
+    // ... args as above ...
+    'public_keys'         => array( $active_key, $successor_key ),
+    'revocation_root_key' => 'RWS...revocation root public key...',
+    'revocation_mode'     => 'log', // its own rollout, independent of 'mode'.
+) );
+```
+
+The root key is deliberately **not** a `public_keys` entry: it signs only
+revocation manifests, never packages, so a stolen root cannot sign malware
+— it can only subtract trust (and a suspected-compromised root is replaced
+by a normal release updating this pinned value). On each update pass the
+guard fetches the store's manifest (`?edd_action=get_revocation_manifest`),
+verifies it against the root, and merges it into a durable cache
+(`pattonwebz_signed_releases_revocations`). A package signed by a revoked
+key then fails with `revoked_key`; your other pinned keys — pin a standing
+successor from day one — keep verifying, which is what turns a stolen-key
+incident into an ordinary update instead of a locked-out fleet.
+
+Client semantics worth knowing:
+
+- **Append-only union.** A later manifest that merely omits a previously
+  revoked key restores nothing; only an explicit, root-signed
+  `unrevoked_keys` entry un-revokes.
+- **Anti-rollback.** A monotonic manifest `sequence` is ratcheted; replayed
+  older manifests are ignored and logged.
+- **Silent-safe fetch.** A failed manifest fetch keeps the cache and never
+  blocks or warns: revocation state is monotonic, so stale is never wrong.
+- **Own rollout.** `revocation_mode` (`off`/`log`/`enforce`, default `log`)
+  is independent of `mode`, with its own runtime filter
+  `pattonwebz_signed_releases_revocation_mode`. In `log` a revoked-key
+  match is logged but still verifies — soak it before letting it block.
+
 ## How verification works
 
 On a plugin update the guard downloads the package itself, then requires,
@@ -116,9 +158,11 @@ version, nothing breaks.**
   required constructor args, no changed defaults that alter verification
   outcomes.
 - The persisted option formats (`pattonwebz_signed_releases_seen`,
-  `pattonwebz_signed_releases_failures` — slug-keyed arrays) are frozen.
+  `pattonwebz_signed_releases_failures` — slug-keyed arrays — and
+  `pattonwebz_signed_releases_revocations`, shared store-wide, not
+  slug-keyed) are frozen.
 - Hook names and signatures (`pattonwebz_signed_releases_mode`,
-  `_verified`, `_failure`) are frozen.
+  `_revocation_mode`, `_verified`, `_failure`) are frozen.
 
 A breaking change means a new major version, and mixing majors across
 plugins on one site is unsupported — ship a major bump across all your

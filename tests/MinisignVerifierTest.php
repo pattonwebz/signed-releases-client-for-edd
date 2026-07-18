@@ -274,6 +274,70 @@ class MinisignVerifierTest extends TestCase {
 		}
 	}
 
+	public function testRevokedKeyFailsWithRevokedKeyCode(): void {
+		$revoked_hex = $this->key()->keyIdHex();
+
+		$verifier = new MinisignVerifier(
+			array( $this->key() ),
+			static function ( string $key_id_hex ) use ( $revoked_hex ): bool {
+				return $key_id_hex === $revoked_hex;
+			}
+		);
+
+		try {
+			$verifier->verifyFile(
+				$this->fixture( 'sample-plugin-1.2.3.zip' ),
+				$this->signature( 'sample-plugin-1.2.3.zip.minisig' )
+			);
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::REVOKED_KEY, $e->errorCode() );
+			$this->assertStringContainsString( $revoked_hex, $e->getMessage() );
+		}
+	}
+
+	public function testRevocationCallableReturningFalseKeepsKeyEffective(): void {
+		$verifier = new MinisignVerifier(
+			array( $this->key() ),
+			static function (): bool {
+				return false;
+			}
+		);
+
+		$comment = $verifier->verifyFile(
+			$this->fixture( 'sample-plugin-1.2.3.zip' ),
+			$this->signature( 'sample-plugin-1.2.3.zip.minisig' )
+		);
+
+		$this->assertSame( 'sample-plugin', $comment->get( 'slug' ) );
+	}
+
+	public function testUnknownKeyFailsBeforeTheRevocationCheckRuns(): void {
+		// NO_MATCHING_KEY outranks REVOKED_KEY: a key that was never pinned
+		// is not "revoked", and the callable must not even be consulted.
+		$consulted = false;
+
+		$verifier = new MinisignVerifier(
+			array( $this->key() ),
+			static function () use ( &$consulted ): bool {
+				$consulted = true;
+
+				return true;
+			}
+		);
+
+		try {
+			$verifier->verifyFile(
+				$this->fixture( 'sample-plugin-1.2.3.zip' ),
+				$this->signature( 'wrong-key.minisig' )
+			);
+			$this->fail( 'Expected VerificationException.' );
+		} catch ( VerificationException $e ) {
+			$this->assertSame( VerificationException::NO_MATCHING_KEY, $e->errorCode() );
+			$this->assertFalse( $consulted );
+		}
+	}
+
 	public function testDirectoryPathThrowsUnreadable(): void {
 		// fopen() on a directory succeeds on Linux, so this failure surfaces
 		// mid-loop when fread() returns false — the second UNREADABLE throw
