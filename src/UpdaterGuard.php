@@ -55,6 +55,14 @@ final class UpdaterGuard {
 	/** Highest signed version verified per slug — the downgrade ratchet. */
 	public const OPTION_SEEN = 'pattonwebz_signed_releases_seen';
 
+	/**
+	 * Last effective (post-filter) verification mode per slug. A runtime
+	 * mode override is a supported escape hatch, but a security mode must
+	 * never change silently — this is how the guard notices a flip and
+	 * says so (see recordModeSwitch()).
+	 */
+	public const OPTION_MODE_SEEN = 'pattonwebz_signed_releases_mode_seen';
+
 	/** A .minisig is well under 1 KB; anything bigger is not a signature. */
 	private const MAX_SIGNATURE_BYTES = 8192;
 
@@ -345,25 +353,32 @@ final class UpdaterGuard {
 	public function hook(): void {
 		add_filter( 'upgrader_pre_download', array( $this, 'interceptDownload' ), 10, 4 );
 		add_action( 'admin_notices', array( $this, 'renderFailureNotice' ) );
+		// Re-resolve the runtime mode on every update poll so a kill-switch
+		// flip is noticed and logged near when it happens, not only on the
+		// next actual download.
+		add_action( 'set_site_transient_update_plugins', array( $this, 'trackRuntimeMode' ) );
 	}
 
 	/**
-	 * The upgrader_pre_download callback.
-	 *
-	 * @param mixed  $reply      false to let WP download; anything else short-circuits.
-	 * @param string $package    Package URL.
-	 * @param object $upgrader   WP_Upgrader instance (unused).
-	 * @param array  $hook_extra Context; ['plugin'] carries the basename on plugin updates.
-	 *
-	 * @return mixed false (not ours), string verified file path, or \WP_Error.
+	 * set_site_transient_update_plugins callback: resolve the runtime mode
+	 * purely for its switchover-tracking side effect.
 	 */
-	public function interceptDownload( $reply, $package, $upgrader = null, $hook_extra = array() ) {
-		// The mode can be adjusted at runtime — the kill switch if a signing
-		// mishap ever blocks legitimate updates before a fix ships. The
-		// switch itself must not become the footgun: a typo'd override used
-		// to fatal the upgrader (VerificationPolicy rejects unknown modes,
-		// and strict_types rejects a non-string outright) — fall back to the
-		// configured mode instead of throwing out of a live update.
+	public function trackRuntimeMode(): void {
+		$this->resolveRuntimePolicy();
+	}
+
+	/**
+	 * The effective policy for this pass: the configured mode, overridable
+	 * at runtime — the kill switch if a signing mishap ever blocks
+	 * legitimate updates before a fix ships. The switch itself must not
+	 * become the footgun: a typo'd override used to fatal the upgrader
+	 * (VerificationPolicy rejects unknown modes, and strict_types rejects a
+	 * non-string outright) — fall back to the configured mode instead of
+	 * throwing out of a live update. And because this is a security mode,
+	 * a flip is never silent: every change of the effective mode is
+	 * recorded, logged, and announced (see recordModeSwitch()).
+	 */
+	private function resolveRuntimePolicy(): VerificationPolicy {
 		$mode = apply_filters( 'pattonwebz_signed_releases_mode', $this->policy->mode(), $this->slug );
 
 		try {
@@ -382,6 +397,85 @@ final class UpdaterGuard {
 				)
 			);
 		}
+
+		$this->recordModeSwitch( $policy->mode() );
+
+		return $policy;
+	}
+
+	/**
+	 * Record the effective mode and announce any switchover. First sight of
+	 * the steady state (effective matches configured, nothing stored yet)
+	 * is not a switchover and stays quiet; everything else — an override
+	 * appearing, changing, or going away — logs and fires the
+	 * pattonwebz_signed_releases_mode_switched action. An active override
+	 * logs at warning severity, a return to the configured mode at info.
+	 *
+	 * @param string $effective The post-filter mode actually in effect.
+	 */
+	private function recordModeSwitch( string $effective ): void {
+		if ( ! function_exists( 'get_option' ) || ! function_exists( 'update_option' ) ) {
+			return;
+		}
+
+		$seen = get_option( self::OPTION_MODE_SEEN, array() );
+
+		// Same defence as the version ratchet: a scalar here (another
+		// plugin, WP-CLI, a bad migration) must not fatal or silently drop
+		// the write; start fresh instead.
+		if ( ! is_array( $seen ) ) {
+			$seen = array();
+		}
+
+		$previous = ( isset( $seen[ $this->slug ] ) && is_string( $seen[ $this->slug ] ) ) ? $seen[ $this->slug ] : null;
+
+		if ( $previous === $effective ) {
+			return;
+		}
+
+		$seen[ $this->slug ] = $effective;
+		update_option( self::OPTION_MODE_SEEN, $seen, false );
+
+		$configured = $this->policy->mode();
+
+		if ( null === $previous && $effective === $configured ) {
+			return;
+		}
+
+		call_user_func(
+			$this->logger,
+			$effective === $configured ? 'info' : 'warning',
+			null === $previous
+				? sprintf(
+					'[signed-releases] %s: runtime mode override active: effective verification mode is "%s", configured mode is "%s" (pattonwebz_signed_releases_mode filter).',
+					$this->slug,
+					$effective,
+					$configured
+				)
+				: sprintf(
+					'[signed-releases] %s: effective verification mode switched from "%s" to "%s" (configured mode "%s", pattonwebz_signed_releases_mode filter).',
+					$this->slug,
+					$previous,
+					$effective,
+					$configured
+				)
+		);
+
+		do_action( 'pattonwebz_signed_releases_mode_switched', $this->slug, $previous, $effective, $configured );
+	}
+
+	/**
+	 * The upgrader_pre_download callback.
+	 *
+	 * @param mixed  $reply      false to let WP download; anything else short-circuits.
+	 * @param string $package    Package URL.
+	 * @param object $upgrader   WP_Upgrader instance (unused).
+	 * @param array  $hook_extra Context; ['plugin'] carries the basename on plugin updates.
+	 *
+	 * @return mixed false (not ours), string verified file path, or \WP_Error.
+	 */
+	public function interceptDownload( $reply, $package, $upgrader = null, $hook_extra = array() ) {
+		$policy = $this->resolveRuntimePolicy();
 
 		// Not our plugin: never disturb another callback's reply. Checked
 		// before the mode gate and independent of it — mode governs how we act

@@ -230,6 +230,50 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertSame( 'warning', $this->logged[0][0] );
 	}
 
+	public function testModeOverrideLogsSwitchoverOnceAndFiresAction(): void {
+		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_OFF;
+
+		$guard = $this->makeGuard();
+		$this->intercept( $guard );
+		$this->intercept( $guard );
+
+		$this->assertCount( 1, $this->logged, 'A steady override logs the switchover once, not on every pass.' );
+		$this->assertSame( 'warning', $this->logged[0][0] );
+		$this->assertStringContainsString( 'override active', $this->logged[0][1] );
+		$this->assertSame(
+			array( 'sample-plugin', null, VerificationPolicy::MODE_OFF, VerificationPolicy::MODE_ENFORCE ),
+			$this->firedActionArgs( 'pattonwebz_signed_releases_mode_switched' )
+		);
+	}
+
+	public function testModeOverrideRemovalLogsReturnToConfigured(): void {
+		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_OFF;
+
+		$guard = $this->makeGuard();
+		$this->intercept( $guard );
+
+		unset( $GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] );
+		$this->intercept( $guard );
+
+		$last = end( $this->logged );
+		$this->assertSame( 'info', $last[0], 'Returning to the configured mode is informational, not alarming.' );
+		$this->assertStringContainsString( 'switched from "off" to "enforce"', $last[1] );
+	}
+
+	public function testTrackRuntimeModeOnPollDetectsSwitchWithoutADownload(): void {
+		$guard = $this->makeGuard();
+
+		$guard->trackRuntimeMode();
+		$this->assertSame( array(), $this->logged, 'First sight of the steady state records quietly.' );
+
+		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_LOG;
+		$guard->trackRuntimeMode();
+
+		$this->assertCount( 1, $this->logged );
+		$this->assertSame( 'warning', $this->logged[0][0] );
+		$this->assertStringContainsString( 'switched from "enforce" to "log"', $this->logged[0][1] );
+	}
+
 	public function testDownloadErrorPassesThrough(): void {
 		$error = new \WP_Error( 'http_404', 'Not found' );
 		$guard = $this->makeGuard(

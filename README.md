@@ -87,6 +87,16 @@ all of them:
 add_filter( 'pattonwebz_signed_releases_mode', fn( $mode, $slug ) => 'log', 10, 2 );
 ```
 
+A runtime override is a supported escape hatch, but it is never silent: the
+guard tracks the effective mode per slug (option
+`pattonwebz_signed_releases_mode_seen`, checked on every update poll via
+`set_site_transient_update_plugins` and again on every download), and any
+switchover — an override appearing, changing, or going away — is logged
+(warning while an override is active, info on return to the configured mode)
+and announced via the `pattonwebz_signed_releases_mode_switched` action
+(`$slug, $previous, $effective, $configured`). An *invalid* filter return is
+refused outright and falls back to the configured mode with a warning.
+
 ### Key revocation
 
 Pin the revocation root key alongside your package keys to enable it:
@@ -158,11 +168,11 @@ version, nothing breaks.**
   required constructor args, no changed defaults that alter verification
   outcomes.
 - The persisted option formats (`pattonwebz_signed_releases_seen`,
-  `pattonwebz_signed_releases_failures` — slug-keyed arrays — and
-  `pattonwebz_signed_releases_revocations`, shared store-wide, not
-  slug-keyed) are frozen.
+  `pattonwebz_signed_releases_failures`, `pattonwebz_signed_releases_mode_seen`
+  — slug-keyed arrays — and `pattonwebz_signed_releases_revocations`, shared
+  store-wide, not slug-keyed) are frozen.
 - Hook names and signatures (`pattonwebz_signed_releases_mode`,
-  `_revocation_mode`, `_verified`, `_failure`) are frozen.
+  `_revocation_mode`, `_verified`, `_failure`, `_mode_switched`) are frozen.
 
 A breaking change means a new major version, and mixing majors across
 plugins on one site is unsupported — ship a major bump across all your
