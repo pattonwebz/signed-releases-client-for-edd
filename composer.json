@@ -2,7 +2,7 @@
     "name": "pattonwebz/signed-releases-client-for-edd",
     "description": "Verifies minisign (Ed25519) signatures on plugin release zips before WordPress installs them. Companion to the Signed Releases for EDD store extension.",
     "type": "library",
-    "license": "GPL-2.0-or-later",
+    "license": "MIT",
     "authors": [
         {
             "name": "William Patton",

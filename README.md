@@ -183,4 +183,7 @@ Never sign a release with them.
 
 ## License
 
-GPL-2.0-or-later. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
+
+This library ships no WordPress code and is MIT-licensed for reuse; when it is
+bundled into a GPL plugin, that distributed plugin remains GPL as a whole.
