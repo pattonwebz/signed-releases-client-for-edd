@@ -207,7 +207,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ) );
 
 		foreach ( $GLOBALS['__wp_actions'] as $action ) {
-			if ( 'srcl_failure' === $action['tag'] ) {
+			if ( 'srcl/failure' === $action['tag'] ) {
 				$this->assertSame( VerificationException::REVOKED_KEY, $action['args'][1]->errorCode() );
 
 				return;
@@ -338,7 +338,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 			)
 		);
 
-		$GLOBALS['__wp_filter_overrides']['srcl_revocation_mode'] = VerificationPolicy::MODE_ENFORCE;
+		$GLOBALS['__wp_filter_overrides']['srcl/revocation_mode'] = VerificationPolicy::MODE_ENFORCE;
 
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ) );
 	}
@@ -347,7 +347,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		$manifest = $this->envelope( $this->manifestJson( 1, array( $this->keyIdHex( $this->activeKey ) ) ) );
 		$guard    = $this->makeGuard( array( 'revocation_fetcher' => $this->fetcherFor( $manifest ) ) );
 
-		$GLOBALS['__wp_filter_overrides']['srcl_revocation_mode'] = 'bogus';
+		$GLOBALS['__wp_filter_overrides']['srcl/revocation_mode'] = 'bogus';
 
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ), 'Configured enforce mode must win over a bogus filter value.' );
 		$this->assertStringContainsString( 'invalid mode', $this->loggedMessages() );

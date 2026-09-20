@@ -84,7 +84,7 @@ The mode can be adjusted at runtime without a release — per plugin or for
 all of them:
 
 ```php
-add_filter( 'srcl_mode', fn( $mode, $slug ) => 'log', 10, 2 );
+add_filter( 'srcl/mode', fn( $mode, $slug ) => 'log', 10, 2 );
 ```
 
 A runtime override is a supported escape hatch, but it is never silent: the
@@ -93,7 +93,7 @@ guard tracks the effective mode per slug (option
 `set_site_transient_update_plugins` and again on every download), and any
 switchover — an override appearing, changing, or going away — is logged
 (warning while an override is active, info on return to the configured mode)
-and announced via the `srcl_mode_switched` action
+and announced via the `srcl/mode_switched` action
 (`$slug, $previous, $effective, $configured`). An *invalid* filter return is
 refused outright and falls back to the configured mode with a warning.
 
@@ -132,7 +132,7 @@ Client semantics worth knowing:
   blocks or warns: revocation state is monotonic, so stale is never wrong.
 - **Own rollout.** `revocation_mode` (`off`/`log`/`enforce`, default `log`)
   is independent of `mode`, with its own runtime filter
-  `srcl_revocation_mode`. In `log` a revoked-key
+  `srcl/revocation_mode`. In `log` a revoked-key
   match is logged but still verifies — soak it before letting it block.
 
 ### Uninstalling a consumer
@@ -196,8 +196,8 @@ version, nothing breaks.**
 - The persisted option formats (`srcl_seen`, `srcl_failures`,
   `srcl_mode_seen` — slug-keyed arrays — and `srcl_revocations`, shared
   store-wide, not slug-keyed) are frozen.
-- Hook names and signatures (`srcl_mode`, `srcl_revocation_mode`,
-  `srcl_verified`, `srcl_failure`, `srcl_mode_switched`) are frozen.
+- Hook names and signatures (`srcl/mode`, `srcl/revocation_mode`, `srcl/verified`,
+  `srcl/failure`, `srcl/mode_switched`, `srcl/misconfigured`, `srcl/no_floor`) are frozen.
 
 A breaking change means a new major version, and mixing majors across
 plugins on one site is unsupported — ship a major bump across all your

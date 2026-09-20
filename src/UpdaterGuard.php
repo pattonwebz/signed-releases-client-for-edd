@@ -314,7 +314,7 @@ final class UpdaterGuard {
 					}
 
 					return new \WP_Error(
-						'srcl_misconfigured',
+						'srcl/misconfigured',
 						sprintf(
 							/* translators: %s: underlying configuration error message */
 							__( 'Update blocked: the release-signature verifier is misconfigured (%s). Fix the configuration, then retry the update.', 'signed-releases-client' ),
@@ -379,7 +379,7 @@ final class UpdaterGuard {
 	 * recorded, logged, and announced (see recordModeSwitch()).
 	 */
 	private function resolveRuntimePolicy(): VerificationPolicy {
-		$mode = apply_filters( 'srcl_mode', $this->policy->mode(), $this->slug );
+		$mode = apply_filters( 'srcl/mode', $this->policy->mode(), $this->slug );
 
 		try {
 			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
@@ -390,7 +390,7 @@ final class UpdaterGuard {
 				$this->logger,
 				'warning',
 				sprintf(
-					'[signed-releases] %s: srcl_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					'[signed-releases] %s: srcl/mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
 					$this->slug,
 					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
 					$this->policy->mode()
@@ -408,7 +408,7 @@ final class UpdaterGuard {
 	 * the steady state (effective matches configured, nothing stored yet)
 	 * is not a switchover and stays quiet; everything else — an override
 	 * appearing, changing, or going away — logs and fires the
-	 * srcl_mode_switched action. An active override
+	 * srcl/mode_switched action. An active override
 	 * logs at warning severity, a return to the configured mode at info.
 	 *
 	 * @param string $effective The post-filter mode actually in effect.
@@ -447,13 +447,13 @@ final class UpdaterGuard {
 			$effective === $configured ? 'info' : 'warning',
 			null === $previous
 				? sprintf(
-					'[signed-releases] %s: runtime mode override active: effective verification mode is "%s", configured mode is "%s" (srcl_mode filter).',
+					'[signed-releases] %s: runtime mode override active: effective verification mode is "%s", configured mode is "%s" (srcl/mode filter).',
 					$this->slug,
 					$effective,
 					$configured
 				)
 				: sprintf(
-					'[signed-releases] %s: effective verification mode switched from "%s" to "%s" (configured mode "%s", srcl_mode filter).',
+					'[signed-releases] %s: effective verification mode switched from "%s" to "%s" (configured mode "%s", srcl/mode filter).',
 					$this->slug,
 					$previous,
 					$effective,
@@ -461,7 +461,7 @@ final class UpdaterGuard {
 				)
 		);
 
-		do_action( 'srcl_mode_switched', $this->slug, $previous, $effective, $configured );
+		do_action( 'srcl/mode_switched', $this->slug, $previous, $effective, $configured );
 	}
 
 	/**
@@ -522,7 +522,7 @@ final class UpdaterGuard {
 			);
 
 			return new \WP_Error(
-				'srcl_no_floor',
+				'srcl/no_floor',
 				__( 'Update blocked: signature enforcement is on but the installed version was not supplied, so there is no downgrade floor. Pass current_version to the verifier.', 'signed-releases-client' )
 			);
 		}
@@ -604,7 +604,7 @@ final class UpdaterGuard {
 		 * @param TrustedComment $comment
 		 * @param string         $file
 		 */
-		do_action( 'srcl_verified', $this->slug, $comment, $file );
+		do_action( 'srcl/verified', $this->slug, $comment, $file );
 
 		return $file;
 	}
@@ -732,7 +732,7 @@ final class UpdaterGuard {
 			return; // No pinned root — the feature does not exist for this guard.
 		}
 
-		$mode = apply_filters( 'srcl_revocation_mode', $this->revocationPolicy->mode(), $this->slug );
+		$mode = apply_filters( 'srcl/revocation_mode', $this->revocationPolicy->mode(), $this->slug );
 
 		try {
 			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
@@ -743,7 +743,7 @@ final class UpdaterGuard {
 				$this->logger,
 				'warning',
 				sprintf(
-					'[signed-releases] %s: srcl_revocation_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					'[signed-releases] %s: srcl/revocation_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
 					$this->slug,
 					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
 					$this->revocationPolicy->mode()
@@ -993,7 +993,7 @@ final class UpdaterGuard {
 		 * @param string                $package
 		 * @param bool                  $blocked
 		 */
-		do_action( 'srcl_failure', $this->slug, $e, $package, $policy->shouldBlock() );
+		do_action( 'srcl/failure', $this->slug, $e, $package, $policy->shouldBlock() );
 
 		if ( ! $policy->shouldBlock() ) {
 			return $file; // Log-only rollout phase: allow the install.
