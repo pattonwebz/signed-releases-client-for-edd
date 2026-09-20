@@ -197,7 +197,9 @@ version, nothing breaks.**
   `srcl_mode_seen` — slug-keyed arrays — and `srcl_revocations`, shared
   store-wide, not slug-keyed) are frozen.
 - Hook names and signatures (`srcl/mode`, `srcl/revocation_mode`, `srcl/verified`,
-  `srcl/failure`, `srcl/mode_switched`, `srcl/misconfigured`, `srcl/no_floor`) are frozen.
+  `srcl/failure`, `srcl/mode_switched`) are frozen.
+- The `WP_Error` codes the guard returns (`srcl/misconfigured`, `srcl/no_floor`,
+  `srcl/verification_failed`) are frozen.
 
 A breaking change means a new major version, and mixing majors across
 plugins on one site is unsupported — ship a major bump across all your
