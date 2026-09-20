@@ -206,6 +206,45 @@ plugins together. A site running one outdated plugin may execute that
 stale copy's verification code; keeping plugins updated is the site's
 responsibility, as it already is for updates generally.
 
+### Which copy is loaded
+
+"The first-loaded copy serves every consumer" is easy to state and
+impossible to observe. When behaviour looks like it is coming from a
+version you did not expect, or you are diagnosing a plugin that pins an
+older copy, ask PHP which file actually defines the class. The right host
+is a must-use plugin, because it is not tied to any one consumer's
+lifecycle: it loads before regular plugins, survives deactivating the
+plugin under investigation, and cannot itself be switched off by the code
+you are debugging.
+
+```php
+<?php
+// wp-content/mu-plugins/signed-releases-loaded-from.php
+
+add_action(
+	'init',
+	function () {
+		if ( ! class_exists( '\PattonWebz\SignedReleases\UpdaterGuard' ) ) {
+			return;
+		}
+
+		$loaded = new ReflectionClass( \PattonWebz\SignedReleases\UpdaterGuard::class );
+
+		error_log( 'signed-releases: guard loaded from ' . $loaded->getFileName() );
+	}
+);
+```
+
+`init` is late enough that every consumer has registered its autoloader,
+so the path printed is the winner: that file's code is what every plugin on
+the site is running. If it is not the `vendor/` directory of the plugin you
+are debugging, another plugin is serving it — expected when several of them
+bundle the package, and only a problem when the two copies are from
+different major versions.
+
+(Without a file to hand, the same question one-liner from the CLI:
+`wp eval 'echo ( new ReflectionClass( "PattonWebz\\SignedReleases\\UpdaterGuard" ) )->getFileName(), "\n";'`)
+
 ## Development
 
 ```sh
