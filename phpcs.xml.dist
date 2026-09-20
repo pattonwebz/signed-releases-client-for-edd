@@ -19,8 +19,15 @@
 
     <rule ref="WordPress-Core"/>
     <rule ref="WordPress-Extra"/>
-    <rule ref="WordPress-Docs"/>
     <rule ref="WordPress-VIP-Go"/>
+
+    <!-- WordPress-Docs is deliberately NOT enabled. This library ships concise
+         docblocks rather than the full @package / @param / @return apparatus that
+         WordPress-Docs requires. Enabling it produced ~128 findings on code that
+         is already documented, dwarfing the handful of substantive findings and
+         making the report unusable as a signal. The naming and filename
+         exclusions below are unrelated to this choice. -->
+
     <rule ref="PHPCompatibilityWP">
         <include-pattern>*.php</include-pattern>
     </rule>

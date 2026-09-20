@@ -35,16 +35,14 @@ jobs:
   # phpcs.xml.dist and is declared in composer.json's require-dev, so the
   # standard installs with the same `composer install` the test jobs use.
   #
-  # This job does not gate yet: adoption surfaced ~128 WordPress-Docs docblock
-  # findings on previously unlinted files, and 0 substantive ones (the 10
-  # substantive findings were addressed with targeted phpcs:ignore comments
-  # rather than ruleset-wide suppressions). Drop continue-on-error once the
-  # docblock baseline is emptied, or after deciding to run without
-  # WordPress-Docs.
+  # This job gates. The 10 substantive findings from first adoption are handled
+  # with targeted phpcs:ignore comments rather than ruleset-wide suppressions,
+  # and WordPress-Docs is deliberately not enabled (see the note in
+  # phpcs.xml.dist), so the baseline is clean and a failure here is a real
+  # regression.
   phpcs:
     name: Coding standards
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set up PHP
