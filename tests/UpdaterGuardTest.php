@@ -292,7 +292,7 @@ final class UpdaterGuardTest extends TestCase {
 		$result = $this->intercept( $guard );
 
 		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'signed_releases_verification_failed', $result->get_error_code() );
+		$this->assertSame( 'srcl/verification_failed', $result->get_error_code() );
 		$this->assertFileDoesNotExist( $this->tempFiles[0] );
 		$this->assertContains( 'srcl/failure', $this->firedActions() );
 		$this->assertNotEmpty( $this->logged );

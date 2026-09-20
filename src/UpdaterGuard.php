@@ -1007,7 +1007,7 @@ final class UpdaterGuard {
 		}
 
 		return new \WP_Error(
-			'signed_releases_verification_failed',
+			'srcl/verification_failed',
 			sprintf(
 				/* translators: 1: plugin slug, 2: failure detail. */
 				'Update for "%1$s" was blocked: the package failed cryptographic signature verification (%2$s). The currently installed version has not been changed. Please contact support.',
