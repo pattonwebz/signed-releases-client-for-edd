@@ -1002,6 +1002,7 @@ final class UpdaterGuard {
 		// Only remove a file we downloaded ourselves; a path handed to us by
 		// another callback is not ours to delete.
 		if ( $owned ) {
+			// phpcs:ignore Generic.PHP.NoSilencedErrors.Forbidden, WordPress.PHP.NoSilencedErrors.Discouraged, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- Best-effort cleanup of a file we downloaded ourselves. A failure leaves the file in the temp directory and must not raise a second error while an update is already being blocked. The return value is intentionally not acted on, hence the suppression.
 			@unlink( $file );
 		}
 
@@ -1106,6 +1107,7 @@ final class UpdaterGuard {
 		$response = wp_safe_remote_get(
 			add_query_arg( $args, $this->storeUrl ),
 			array(
+				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Deliberately longer than VIP's 5s guidance: this fetch decides whether an update is permitted, so a short timeout on a slow store turns into a false missing_signature and blocks a legitimate update in enforce mode. A small JSON manifest does not need 15s of bandwidth, but it may need more than 5s of patience.
 				'timeout'             => 15,
 				'limit_response_size' => self::MAX_SIGNATURE_BYTES,
 			)
@@ -1127,6 +1129,7 @@ final class UpdaterGuard {
 		$response = wp_safe_remote_get(
 			add_query_arg( array( 'edd_action' => 'get_revocation_manifest' ), $this->storeUrl ),
 			array(
+				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Same reasoning as the signature fetch: a failed revocation fetch must not be indistinguishable from "no revocations published", so this errs on patience rather than VIP's 5s guidance.
 				'timeout'             => 15,
 				'limit_response_size' => self::MAX_MANIFEST_BYTES,
 			)
@@ -1154,6 +1157,7 @@ final class UpdaterGuard {
 	}
 
 	private function defaultLogger( string $level, string $message ): void {
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- This is the injectable default logger, used only when the consumer passes no logger callable. error_log() is the sane zero-dependency fallback; it is not stray debug code. "$level" is unused because error_log() has no severity parameter.
 		error_log( $message );
 	}
 }

@@ -145,6 +145,7 @@ class MinisignVerifier {
 	}
 
 	private function hashFileContents( string $file_path ): string {
+		// phpcs:ignore Generic.PHP.NoSilencedErrors.Forbidden, WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_fopen -- The return value is checked on the next line and converted to a VerificationException; "@" suppresses PHP's warning in favour of that exception. Direct fopen() rather than WP_Filesystem because this library also runs outside WordPress.
 		$handle = @fopen( $file_path, 'rb' );
 
 		if ( false === $handle ) {
@@ -155,6 +156,7 @@ class MinisignVerifier {
 			$state = $this->hashInit();
 
 			while ( ! feof( $handle ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread -- See hashFileContents(): the handle comes from fopen(), the return value is checked immediately below, and WP_Filesystem is not usable in a library that also runs outside WordPress.
 				$chunk = fread( $handle, self::CHUNK_SIZE );
 
 				if ( false === $chunk ) {
