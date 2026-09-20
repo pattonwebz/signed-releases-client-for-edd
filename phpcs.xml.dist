@@ -1,0 +1,114 @@
+<?xml version="1.0"?>
+<ruleset name="pattonwebz/signed-releases-client-for-edd Coding Standards">
+    <description>WordPress coding standards for the signed-releases client library, aligned with the ruleset used on signed-releases-for-edd and accessibility-checker, minus the conventions this PSR-4 library deliberately does not follow.</description>
+
+    <file>.</file>
+
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+    <!-- Test scaffolding shims WP functions and manages a sandbox; WPCS rules
+         target shipped library code. -->
+    <exclude-pattern>*/tests/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+
+    <config name="testVersion" value="7.4-"/>
+    <config name="minimum_supported_wp_version" value="6.0"/>
+
+    <rule ref="WordPress-Core"/>
+    <rule ref="WordPress-Extra"/>
+    <rule ref="WordPress-Docs"/>
+    <rule ref="WordPress-VIP-Go"/>
+    <rule ref="PHPCompatibilityWP">
+        <include-pattern>*.php</include-pattern>
+    </rule>
+
+    <rule ref="Generic.CodeAnalysis.UnusedFunctionParameter"/>
+    <rule ref="Generic.Commenting.Todo"/>
+
+    <rule ref="WordPress.WP.I18n">
+        <properties>
+            <property name="text_domain" type="array">
+                <element value="signed-releases-client"/>
+            </property>
+        </properties>
+    </rule>
+
+    <!-- This package is PSR-4 (StudlyCaps filenames, namespaced classes) and
+         uses camelCase members with typed properties. WordPress' snake_case
+         naming and class-*.php filename conventions are therefore not enforced
+         here; that is a deliberate, load-bearing choice for a Composer library
+         that is also usable outside WordPress. Everything else in WordPress-Core
+         and WordPress-Extra still applies. -->
+    <rule ref="WordPress.Files.FileName">
+        <severity>0</severity>
+    </rule>
+    <rule ref="WordPress.NamingConventions.ValidFunctionName">
+        <severity>0</severity>
+    </rule>
+    <rule ref="WordPress.NamingConventions.ValidVariableName">
+        <severity>0</severity>
+    </rule>
+
+    <!-- Public hooks use the {prefix}/{hook} convention (`srcl/mode`).
+         Declare `/` as an additional word delimiter so the ValidHookName sniff
+         accepts it, instead of disabling the UseUnderscores check outright. This
+         keeps the lowercase check and every other hook-name rule active for all
+         other hooks. The property is WPCS' supported mechanism for this. -->
+    <rule ref="WordPress.NamingConventions.ValidHookName">
+        <properties>
+            <property name="additionalWordDelimiters" value="/"/>
+        </properties>
+    </rule>
+
+    <rule ref="VariableAnalysis.CodeAnalysis.VariableAnalysis">
+        <properties>
+            <!-- Do not report on unused variables before require nor unused/undefined variables in file scope. -->
+            <property name="allowUnusedVariablesBeforeRequire" value="false"/>
+            <property name="allowUndefinedVariablesInFileScope" value="false"/>
+        </properties>
+    </rule>
+
+    <!-- The WP-VIP-Go ruleset disables some default rules; re-enable the ones
+         that are still good practice even off VIP infrastructure. -->
+    <rule ref="Internal.LineEndings.Mixed">
+        <severity>6</severity>
+    </rule>
+    <rule ref="Generic.CodeAnalysis.AssignmentInCondition">
+        <severity>6</severity>
+    </rule>
+    <rule ref="WordPress.CodeAnalysis.AssignmentInTernaryCondition.FoundInTernaryCondition">
+        <severity>6</severity>
+    </rule>
+    <rule ref="WordPress.PHP.DiscouragedPHPFunctions.urlencode_urlencode">
+        <severity>6</severity>
+    </rule>
+    <rule ref="WordPress.PHP.DontExtract">
+        <severity>6</severity>
+    </rule>
+    <rule ref="Universal.Operators.StrictComparisons">
+        <severity>6</severity>
+    </rule>
+    <rule ref="WordPress.PHP.StrictInArray.MissingTrueStrict">
+        <severity>6</severity>
+    </rule>
+    <rule ref="Generic.PHP.NoSilencedErrors">
+        <severity>6</severity>
+    </rule>
+    <rule ref="WordPress.Security.EscapeOutput.UnsafePrintingFunction">
+        <severity>6</severity>
+    </rule>
+    <rule ref="VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable">
+        <severity>5</severity>
+    </rule>
+    <rule ref="Generic.PHP.DisallowShortOpenTag.EchoFound">
+        <severity>6</severity>
+    </rule>
+    <rule ref="Squiz.WhiteSpace.SuperfluousWhitespace.EmptyLines"/>
+    <rule ref="Squiz.WhiteSpace.SuperfluousWhitespace.EndLine"/>
+    <!-- End of VIP resets -->
+
+    <ini name="error_reporting" value="E_ALL &#38; ~E_DEPRECATED"/>
+</ruleset>
