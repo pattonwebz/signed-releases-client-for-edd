@@ -84,16 +84,16 @@ The mode can be adjusted at runtime without a release — per plugin or for
 all of them:
 
 ```php
-add_filter( 'pattonwebz_signed_releases_mode', fn( $mode, $slug ) => 'log', 10, 2 );
+add_filter( 'srcl_mode', fn( $mode, $slug ) => 'log', 10, 2 );
 ```
 
 A runtime override is a supported escape hatch, but it is never silent: the
 guard tracks the effective mode per slug (option
-`pattonwebz_signed_releases_mode_seen`, checked on every update poll via
+`srcl_mode_seen`, checked on every update poll via
 `set_site_transient_update_plugins` and again on every download), and any
 switchover — an override appearing, changing, or going away — is logged
 (warning while an override is active, info on return to the configured mode)
-and announced via the `pattonwebz_signed_releases_mode_switched` action
+and announced via the `srcl_mode_switched` action
 (`$slug, $previous, $effective, $configured`). An *invalid* filter return is
 refused outright and falls back to the configured mode with a warning.
 
@@ -116,7 +116,7 @@ revocation manifests, never packages, so a stolen root cannot sign malware
 by a normal release updating this pinned value). On each update pass the
 guard fetches the store's manifest (`?edd_action=get_revocation_manifest`),
 verifies it against the root, and merges it into a durable cache
-(`pattonwebz_signed_releases_revocations`). A package signed by a revoked
+(`srcl_revocations`). A package signed by a revoked
 key then fails with `revoked_key`; your other pinned keys — pin a standing
 successor from day one — keep verifying, which is what turns a stolen-key
 incident into an ordinary update instead of a locked-out fleet.
@@ -132,7 +132,7 @@ Client semantics worth knowing:
   blocks or warns: revocation state is monotonic, so stale is never wrong.
 - **Own rollout.** `revocation_mode` (`off`/`log`/`enforce`, default `log`)
   is independent of `mode`, with its own runtime filter
-  `pattonwebz_signed_releases_revocation_mode`. In `log` a revoked-key
+  `srcl_revocation_mode`. In `log` a revoked-key
   match is logged but still verifies — soak it before letting it block.
 
 ### Uninstalling a consumer
@@ -140,9 +140,9 @@ Client semantics worth knowing:
 Whatever else your `uninstall.php` cleans up, it must leave these two options
 alone:
 
-- `pattonwebz_signed_releases_seen` — the high-water mark that feeds the
+- `srcl_seen` — the high-water mark that feeds the
   downgrade floor.
-- `pattonwebz_signed_releases_revocations` — the append-only, ratcheted
+- `srcl_revocations` — the append-only, ratcheted
   revocation cache.
 
 Both are ratchets, not caches. Deleting them resets the site's floor to
@@ -158,8 +158,8 @@ the option outright therefore disarms every consumer on the site, not just
 the plugin being removed, and the others have no way to notice. Removing
 only your own slug key from `_seen` is at least self-inflicted, but there is
 no good reason to do even that. The failures and mode bookkeeping
-(`pattonwebz_signed_releases_failures`,
-`pattonwebz_signed_releases_mode_seen`) is harmless either way.
+(`srcl_failures`,
+`srcl_mode_seen`) is harmless either way.
 
 ## How verification works
 
@@ -193,18 +193,23 @@ version, nothing breaks.**
 - The public API only grows: no removed or renamed classes/methods, no new
   required constructor args, no changed defaults that alter verification
   outcomes.
-- The persisted option formats (`pattonwebz_signed_releases_seen`,
-  `pattonwebz_signed_releases_failures`, `pattonwebz_signed_releases_mode_seen`
-  — slug-keyed arrays — and `pattonwebz_signed_releases_revocations`, shared
+- The persisted option formats (`srcl_seen`, `srcl_failures`,
+  `srcl_mode_seen` — slug-keyed arrays — and `srcl_revocations`, shared
   store-wide, not slug-keyed) are frozen.
-- Hook names and signatures (`pattonwebz_signed_releases_mode`,
-  `_revocation_mode`, `_verified`, `_failure`, `_mode_switched`) are frozen.
+- Hook names and signatures (`srcl_mode`, `srcl_revocation_mode`,
+  `srcl_verified`, `srcl_failure`, `srcl_mode_switched`) are frozen.
 
 A breaking change means a new major version, and mixing majors across
 plugins on one site is unsupported — ship a major bump across all your
 plugins together. A site running one outdated plugin may execute that
 stale copy's verification code; keeping plugins updated is the site's
 responsibility, as it already is for updates generally.
+
+The identifiers were renamed from the `pattonwebz_signed_releases_*` prefix
+to `srcl_*` — options, hooks and the manifest format tags alike — in 0.3.0.
+No released consumer ever used the earlier names, so there is nothing to
+migrate: if you are coming from 0.2.0 or earlier and wrote filters or set
+options by hand, use the new names.
 
 ### Which copy is loaded
 

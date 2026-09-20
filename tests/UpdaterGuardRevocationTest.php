@@ -87,7 +87,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 
 		return json_encode(
 			array(
-				'format'         => 'pattonwebz-revocation-v1',
+				'format'         => 'srcl-revocation-v1',
 				'sequence'       => $sequence,
 				'issued_at'      => '2026-07-18T14:00:00Z',
 				'revoked_keys'   => array_map( $entry, $revoked ),
@@ -103,11 +103,11 @@ final class UpdaterGuardRevocationTest extends TestCase {
 	private function envelope( string $manifest_json, ?array $signing_key = null, ?string $trusted_comment = null ): string {
 		$signing_key = $signing_key ?? $this->rootKey;
 		$sequence    = json_decode( $manifest_json, true )['sequence'] ?? 0;
-		$comment     = $trusted_comment ?? sprintf( 'revocation-manifest sequence:%d format:pattonwebz-revocation-v1', $sequence );
+		$comment     = $trusted_comment ?? sprintf( 'revocation-manifest sequence:%d format:srcl-revocation-v1', $sequence );
 
 		return json_encode(
 			array(
-				'format'   => 'pattonwebz-revocation-envelope-v1',
+				'format'   => 'srcl-revocation-envelope-v1',
 				'manifest' => $manifest_json,
 				'minisig'  => $this->signMinisig( $signing_key, $manifest_json, $comment ),
 			)
@@ -207,7 +207,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ) );
 
 		foreach ( $GLOBALS['__wp_actions'] as $action ) {
-			if ( 'pattonwebz_signed_releases_failure' === $action['tag'] ) {
+			if ( 'srcl_failure' === $action['tag'] ) {
 				$this->assertSame( VerificationException::REVOKED_KEY, $action['args'][1]->errorCode() );
 
 				return;
@@ -338,7 +338,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 			)
 		);
 
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_revocation_mode'] = VerificationPolicy::MODE_ENFORCE;
+		$GLOBALS['__wp_filter_overrides']['srcl_revocation_mode'] = VerificationPolicy::MODE_ENFORCE;
 
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ) );
 	}
@@ -347,7 +347,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		$manifest = $this->envelope( $this->manifestJson( 1, array( $this->keyIdHex( $this->activeKey ) ) ) );
 		$guard    = $this->makeGuard( array( 'revocation_fetcher' => $this->fetcherFor( $manifest ) ) );
 
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_revocation_mode'] = 'bogus';
+		$GLOBALS['__wp_filter_overrides']['srcl_revocation_mode'] = 'bogus';
 
 		$this->assertInstanceOf( \WP_Error::class, $this->intercept( $guard ), 'Configured enforce mode must win over a bogus filter value.' );
 		$this->assertStringContainsString( 'invalid mode', $this->loggedMessages() );
@@ -355,7 +355,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 
 	public function testMirrorMismatchWarnsButTrustsBody(): void {
 		$json     = $this->manifestJson( 1, array( $this->keyIdHex( $this->activeKey ) ) );
-		$manifest = $this->envelope( $json, null, 'revocation-manifest sequence:9 format:pattonwebz-revocation-v1' );
+		$manifest = $this->envelope( $json, null, 'revocation-manifest sequence:9 format:srcl-revocation-v1' );
 
 		$result = $this->intercept( $this->makeGuard( array( 'revocation_fetcher' => $this->fetcherFor( $manifest ) ) ) );
 
@@ -367,7 +367,7 @@ final class UpdaterGuardRevocationTest extends TestCase {
 	public function testUnknownFutureManifestFormatFailsClosed(): void {
 		$json = json_encode(
 			array(
-				'format'       => 'pattonwebz-revocation-v2',
+				'format'       => 'srcl-revocation-v2',
 				'sequence'     => 1,
 				'revoked_keys' => array( array( 'key_id' => $this->keyIdHex( $this->activeKey ) ) ),
 			)
@@ -470,10 +470,10 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		$manifest_json = $this->manifestJson( 1, array( $this->keyIdHex( $this->activeKey ) ) );
 		$forged        = json_encode(
 			array(
-				'format'   => 'pattonwebz-revocation-envelope-v1',
+				'format'   => 'srcl-revocation-envelope-v1',
 				'manifest' => $manifest_json,
 				// Signed by the active (package) key, not the root.
-				'minisig'  => $this->signMinisig( $this->activeKey, $manifest_json, 'revocation-manifest sequence:1 format:pattonwebz-revocation-v1' ),
+				'minisig'  => $this->signMinisig( $this->activeKey, $manifest_json, 'revocation-manifest sequence:1 format:srcl-revocation-v1' ),
 			)
 		);
 
@@ -537,9 +537,9 @@ final class UpdaterGuardRevocationTest extends TestCase {
 		// Guard A (root A) revokes victimKey's ID.
 		$manifestA = json_encode(
 			array(
-				'format'   => 'pattonwebz-revocation-envelope-v1',
+				'format'   => 'srcl-revocation-envelope-v1',
 				'manifest' => $this->manifestJson( 1, array( $this->keyIdHex( $victimKey ) ) ),
-				'minisig'  => $this->signMinisig( $this->rootKey, $this->manifestJson( 1, array( $this->keyIdHex( $victimKey ) ) ), 'revocation-manifest sequence:1 format:pattonwebz-revocation-v1' ),
+				'minisig'  => $this->signMinisig( $this->rootKey, $this->manifestJson( 1, array( $this->keyIdHex( $victimKey ) ) ), 'revocation-manifest sequence:1 format:srcl-revocation-v1' ),
 			)
 		);
 		$guardA = $this->makeGuard(

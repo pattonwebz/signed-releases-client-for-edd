@@ -43,7 +43,7 @@ final class RevocationList {
 	 * — an outer map keyed by root scope, each bucket keyed by uppercase hex
 	 * key ID. The scope is an opaque per-root string set by the caller.
 	 */
-	public const OPTION_REVOCATIONS = 'pattonwebz_signed_releases_revocations';
+	public const OPTION_REVOCATIONS = 'srcl_revocations';
 
 	public const APPLY_ACCEPTED = 'accepted';
 	public const APPLY_NOOP     = 'noop';

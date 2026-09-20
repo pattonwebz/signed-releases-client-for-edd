@@ -14,7 +14,7 @@ final class RevocationManifestTest extends TestCase {
 		return json_encode(
 			array_merge(
 				array(
-					'format'       => 'pattonwebz-revocation-v1',
+					'format'       => 'srcl-revocation-v1',
 					'sequence'     => 3,
 					'issued_at'    => '2026-07-18T14:00:00Z',
 					'revoked_keys' => array(
@@ -81,7 +81,7 @@ final class RevocationManifestTest extends TestCase {
 
 	public function testUnknownFormatTagIsRejected(): void {
 		// An incompatible future shape must fail closed at parse.
-		$this->assertMalformed( $this->manifestJson( array( 'format' => 'pattonwebz-revocation-v2' ) ), 'format tag' );
+		$this->assertMalformed( $this->manifestJson( array( 'format' => 'srcl-revocation-v2' ) ), 'format tag' );
 		$this->assertMalformed( json_encode( array( 'sequence' => 1 ) ), 'format tag' );
 	}
 

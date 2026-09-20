@@ -38,7 +38,7 @@ final class UpdaterGuardTest extends TestCase {
 	}
 
 	private function fixture( string $name ): string {
-		return PATTONWEBZ_TEST_FIXTURES . '/' . $name;
+		return SRCL_TEST_FIXTURES . '/' . $name;
 	}
 
 	private function noVersionSignature(): string {
@@ -127,7 +127,7 @@ final class UpdaterGuardTest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertFileExists( $result );
-		$this->assertContains( 'pattonwebz_signed_releases_verified', $this->firedActions() );
+		$this->assertContains( 'srcl_verified', $this->firedActions() );
 		$this->assertSame( array(), $this->logged );
 	}
 
@@ -172,7 +172,7 @@ final class UpdaterGuardTest extends TestCase {
 		$result = $guard->interceptDownload( $tmp, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
 
 		$this->assertSame( $tmp, $result );
-		$this->assertContains( 'pattonwebz_signed_releases_verified', $this->firedActions() );
+		$this->assertContains( 'srcl_verified', $this->firedActions() );
 	}
 
 	public function testBlocksAnUnverifiableFileSuppliedByAnEarlierCallback(): void {
@@ -197,7 +197,7 @@ final class UpdaterGuardTest extends TestCase {
 	}
 
 	public function testModeFilterActsAsKillSwitch(): void {
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_OFF;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_OFF;
 
 		$this->assertFalse( $this->intercept( $this->makeGuard() ) );
 	}
@@ -206,7 +206,7 @@ final class UpdaterGuardTest extends TestCase {
 		// A typo'd override used to throw uncaught out of a live upgrader
 		// call - the kill switch becoming the footgun. It must instead fall
 		// back to the configured (enforce) mode and keep blocking as normal.
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = 'enforcee';
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = 'enforcee';
 
 		$guard  = $this->makeGuard( array( 'downloader' => $this->downloaderFor( 'sample-plugin-1.2.3.tampered.zip' ) ) );
 		$result = $this->intercept( $guard );
@@ -221,7 +221,7 @@ final class UpdaterGuardTest extends TestCase {
 		// A non-string filter return is normalised to '' before it reaches
 		// VerificationPolicy, whose constructor rejects '' with an
 		// InvalidArgumentException — caught the same as any bad string.
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = array( 'enforce' );
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = array( 'enforce' );
 
 		$result = $this->intercept( $this->makeGuard() );
 
@@ -231,7 +231,7 @@ final class UpdaterGuardTest extends TestCase {
 	}
 
 	public function testModeOverrideLogsSwitchoverOnceAndFiresAction(): void {
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_OFF;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_OFF;
 
 		$guard = $this->makeGuard();
 		$this->intercept( $guard );
@@ -242,17 +242,17 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertStringContainsString( 'override active', $this->logged[0][1] );
 		$this->assertSame(
 			array( 'sample-plugin', null, VerificationPolicy::MODE_OFF, VerificationPolicy::MODE_ENFORCE ),
-			$this->firedActionArgs( 'pattonwebz_signed_releases_mode_switched' )
+			$this->firedActionArgs( 'srcl_mode_switched' )
 		);
 	}
 
 	public function testModeOverrideRemovalLogsReturnToConfigured(): void {
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_OFF;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_OFF;
 
 		$guard = $this->makeGuard();
 		$this->intercept( $guard );
 
-		unset( $GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] );
+		unset( $GLOBALS['__wp_filter_overrides']['srcl_mode'] );
 		$this->intercept( $guard );
 
 		$last = end( $this->logged );
@@ -266,7 +266,7 @@ final class UpdaterGuardTest extends TestCase {
 		$guard->trackRuntimeMode();
 		$this->assertSame( array(), $this->logged, 'First sight of the steady state records quietly.' );
 
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_LOG;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_LOG;
 		$guard->trackRuntimeMode();
 
 		$this->assertCount( 1, $this->logged );
@@ -294,7 +294,7 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertInstanceOf( \WP_Error::class, $result );
 		$this->assertSame( 'signed_releases_verification_failed', $result->get_error_code() );
 		$this->assertFileDoesNotExist( $this->tempFiles[0] );
-		$this->assertContains( 'pattonwebz_signed_releases_failure', $this->firedActions() );
+		$this->assertContains( 'srcl_failure', $this->firedActions() );
 		$this->assertNotEmpty( $this->logged );
 	}
 
@@ -311,7 +311,7 @@ final class UpdaterGuardTest extends TestCase {
 		$this->assertIsString( $result );
 		$this->assertFileExists( $result );
 		$this->assertNotEmpty( $this->logged );
-		$this->assertContains( 'pattonwebz_signed_releases_failure', $this->firedActions() );
+		$this->assertContains( 'srcl_failure', $this->firedActions() );
 
 		$failures = get_option( UpdaterGuard::OPTION_FAILURES );
 		$this->assertSame( 'bad_signature', $failures['sample-plugin']['code'] );
@@ -640,7 +640,7 @@ final class UpdaterGuardTest extends TestCase {
 		$result  = call_user_func_array( $hook['callback'], array_slice( $wp_args, 0, $hook['accepted_args'] ) );
 
 		$this->assertIsString( $result, 'Dispatching with the registered accepted_args must reach verification.' );
-		$this->assertContains( 'pattonwebz_signed_releases_verified', $this->firedActions() );
+		$this->assertContains( 'srcl_verified', $this->firedActions() );
 	}
 
 	/** Last full hook record registered for a tag, or null. */
@@ -680,7 +680,7 @@ final class UpdaterGuardTest extends TestCase {
 
 		$result = $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
 		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'pattonwebz_signed_releases_misconfigured', $result->get_error_code() );
+		$this->assertSame( 'srcl_misconfigured', $result->get_error_code() );
 
 		// A different plugin's update must be completely unaffected.
 		$this->assertFalse( $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => 'other/other.php' ) ) );
@@ -982,7 +982,7 @@ final class UpdaterGuardTest extends TestCase {
 		$guard = $this->makeGuard( array( 'downloader' => $this->downloaderFor( 'sample-plugin-1.2.3.tampered.zip' ) ) );
 		$this->intercept( $guard );
 
-		$args = $this->firedActionArgs( 'pattonwebz_signed_releases_failure' );
+		$args = $this->firedActionArgs( 'srcl_failure' );
 
 		$this->assertNotNull( $args );
 		$this->assertSame( 'sample-plugin', $args[0] );
@@ -1001,7 +1001,7 @@ final class UpdaterGuardTest extends TestCase {
 		);
 		$this->intercept( $guard );
 
-		$args = $this->firedActionArgs( 'pattonwebz_signed_releases_failure' );
+		$args = $this->firedActionArgs( 'srcl_failure' );
 
 		$this->assertNotNull( $args );
 		$this->assertFalse( $args[3], 'Log mode reports $blocked = false.' );
@@ -1010,7 +1010,7 @@ final class UpdaterGuardTest extends TestCase {
 	public function testVerifiedActionReceivesContractArgs(): void {
 		$result = $this->intercept( $this->makeGuard() );
 
-		$args = $this->firedActionArgs( 'pattonwebz_signed_releases_verified' );
+		$args = $this->firedActionArgs( 'srcl_verified' );
 
 		$this->assertNotNull( $args );
 		$this->assertSame( 'sample-plugin', $args[0] );
@@ -1022,7 +1022,7 @@ final class UpdaterGuardTest extends TestCase {
 	public function testModeFilterCanEscalateLogToEnforce(): void {
 		// The runtime filter works in both directions: a site can harden a
 		// log-configured guard to enforce without a code change.
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_ENFORCE;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_ENFORCE;
 
 		$guard = $this->makeGuard(
 			array(
@@ -1229,7 +1229,7 @@ final class UpdaterGuardTest extends TestCase {
 		);
 
 		$this->assertIsString( $this->intercept( $guard ) );
-		$this->assertContains( 'pattonwebz_signed_releases_verified', $this->firedActions() );
+		$this->assertContains( 'srcl_verified', $this->firedActions() );
 	}
 
 	public function requiredArgProvider(): array {
@@ -1292,7 +1292,7 @@ final class UpdaterGuardTest extends TestCase {
 
 		$result = $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
 		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'pattonwebz_signed_releases_misconfigured', $result->get_error_code() );
+		$this->assertSame( 'srcl_misconfigured', $result->get_error_code() );
 	}
 
 	public function testEmptyCurrentVersionIsToleratedOutsideEnforce(): void {
@@ -1328,7 +1328,7 @@ final class UpdaterGuardTest extends TestCase {
 
 			$result = $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
 			$this->assertInstanceOf( \WP_Error::class, $result );
-			$this->assertSame( 'pattonwebz_signed_releases_misconfigured', $result->get_error_code() );
+			$this->assertSame( 'srcl_misconfigured', $result->get_error_code() );
 			$this->assertStringContainsString( 'current_version', $result->get_error_message() );
 		}
 	}
@@ -1338,7 +1338,7 @@ final class UpdaterGuardTest extends TestCase {
 		// kill-switch filter raises to enforce at runtime never passed the
 		// constructor's floor check — interceptDownload must fail closed
 		// rather than enforce with no downgrade floor.
-		$GLOBALS['__wp_filter_overrides']['pattonwebz_signed_releases_mode'] = VerificationPolicy::MODE_ENFORCE;
+		$GLOBALS['__wp_filter_overrides']['srcl_mode'] = VerificationPolicy::MODE_ENFORCE;
 
 		$guard = $this->makeGuard(
 			array(
@@ -1353,7 +1353,7 @@ final class UpdaterGuardTest extends TestCase {
 		$result = $this->intercept( $guard );
 
 		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'pattonwebz_signed_releases_no_floor', $result->get_error_code() );
+		$this->assertSame( 'srcl_no_floor', $result->get_error_code() );
 		$this->assertNotSame( array(), $this->logged );
 	}
 
@@ -1367,7 +1367,7 @@ final class UpdaterGuardTest extends TestCase {
 
 		$result = $blocker( false, self::PACKAGE_URL, null, array( 'plugin' => self::PLUGIN_FILE ) );
 		$this->assertInstanceOf( \WP_Error::class, $result );
-		$this->assertSame( 'pattonwebz_signed_releases_misconfigured', $result->get_error_code() );
+		$this->assertSame( 'srcl_misconfigured', $result->get_error_code() );
 		$this->assertStringContainsString( 'Unknown verification mode', $result->get_error_message() );
 	}
 

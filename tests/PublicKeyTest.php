@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 final class PublicKeyTest extends TestCase {
 
 	private function pubFileText(): string {
-		return file_get_contents( PATTONWEBZ_TEST_FIXTURES . '/testkey.pub' );
+		return file_get_contents( SRCL_TEST_FIXTURES . '/testkey.pub' );
 	}
 
 	private function bareBase64(): string {

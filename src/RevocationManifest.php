@@ -6,7 +6,7 @@
  * key IDs that must no longer be trusted:
  *
  *   {
- *     "format": "pattonwebz-revocation-v1",
+ *     "format": "srcl-revocation-v1",
  *     "sequence": 3,
  *     "issued_at": "2026-07-18T14:00:00Z",
  *     "revoked_keys": [
@@ -35,7 +35,7 @@ namespace PattonWebz\SignedReleases;
 
 final class RevocationManifest {
 
-	public const FORMAT = 'pattonwebz-revocation-v1';
+	public const FORMAT = 'srcl-revocation-v1';
 
 	private int $sequence;
 

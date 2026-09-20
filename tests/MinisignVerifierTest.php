@@ -15,7 +15,7 @@ class MinisignVerifierTest extends TestCase {
 	use InTestSigner;
 
 	protected function fixture( string $name ): string {
-		return PATTONWEBZ_TEST_FIXTURES . '/' . $name;
+		return SRCL_TEST_FIXTURES . '/' . $name;
 	}
 
 	protected function key( string $name = 'testkey.pub' ): PublicKey {
