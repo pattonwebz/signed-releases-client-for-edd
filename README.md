@@ -135,6 +135,32 @@ Client semantics worth knowing:
   `pattonwebz_signed_releases_revocation_mode`. In `log` a revoked-key
   match is logged but still verifies — soak it before letting it block.
 
+### Uninstalling a consumer
+
+Whatever else your `uninstall.php` cleans up, it must leave these two options
+alone:
+
+- `pattonwebz_signed_releases_seen` — the high-water mark that feeds the
+  downgrade floor.
+- `pattonwebz_signed_releases_revocations` — the append-only, ratcheted
+  revocation cache.
+
+Both are ratchets, not caches. Deleting them resets the site's floor to
+whatever version happens to be installed — reopening the window for a store
+to walk the site *backwards* to an older signed release — and re-arms keys
+that were revoked. The update path keeps looking healthy the whole time, so
+nothing surfaces until it matters.
+
+They are also shared rather than per-plugin: `_seen` (and the failures and
+mode options) is a single option holding one key per slug, and
+`_revocations` is not slug-keyed at all. An uninstall routine that deletes
+the option outright therefore disarms every consumer on the site, not just
+the plugin being removed, and the others have no way to notice. Removing
+only your own slug key from `_seen` is at least self-inflicted, but there is
+no good reason to do even that. The failures and mode bookkeeping
+(`pattonwebz_signed_releases_failures`,
+`pattonwebz_signed_releases_mode_seen`) is harmless either way.
+
 ## How verification works
 
 On a plugin update the guard downloads the package itself, then requires,
