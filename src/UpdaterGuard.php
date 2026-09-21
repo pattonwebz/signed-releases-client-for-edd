@@ -44,11 +44,11 @@ final class UpdaterGuard {
 	 * COMPATIBILITY CONTRACT — this package ships un-prefixed in several
 	 * plugins at once and the first-loaded copy serves them all. These
 	 * option names, their slug-keyed array shapes, and the
-	 * srcl_{mode,revocation_mode,verified,failure}
-	 * hook signatures are frozen: changing any of them within a major
-	 * version breaks co-installed plugins running another copy. The same
-	 * applies to RevocationList::OPTION_REVOCATIONS and its shape. See
-	 * README.
+	 * srcl/mode, srcl/revocation_mode, srcl/verified, srcl/failure and
+	 * srcl/mode_switched hook names and signatures are frozen: changing any of
+	 * them within a major version breaks co-installed plugins running another
+	 * copy. The same applies to RevocationList::OPTION_REVOCATIONS and its
+	 * shape. See README.
 	 */
 	public const OPTION_FAILURES = 'srcl_failures';
 
