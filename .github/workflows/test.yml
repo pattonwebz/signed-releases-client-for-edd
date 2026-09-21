@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   phpunit:
     runs-on: ubuntu-latest
@@ -14,20 +17,40 @@ jobs:
         php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4']
     name: PHP ${{ matrix.php }}
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set up PHP ${{ matrix.php }}
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: ${{ matrix.php }}
           extensions: sodium
           coverage: none
-
       - name: Validate composer.json
         run: composer validate --strict
-
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
-
       - name: Run tests
         run: vendor/bin/phpunit
+
+  # WordPress coding standards for the library. The ruleset lives in
+  # phpcs.xml.dist and is declared in composer.json's require-dev, so the
+  # standard installs with the same `composer install` the test jobs use.
+  #
+  # This job gates. The 10 substantive findings from first adoption are handled
+  # with targeted phpcs:ignore comments rather than ruleset-wide suppressions,
+  # and WordPress-Docs is deliberately not enabled (see the note in
+  # phpcs.xml.dist), so the baseline is clean and a failure here is a real
+  # regression.
+  phpcs:
+    name: Coding standards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.2'
+          coverage: none
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+      - name: Run PHPCS
+        run: vendor/bin/phpcs --standard=phpcs.xml.dist --report=summary

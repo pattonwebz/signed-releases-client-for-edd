@@ -44,16 +44,16 @@ final class UpdaterGuard {
 	 * COMPATIBILITY CONTRACT — this package ships un-prefixed in several
 	 * plugins at once and the first-loaded copy serves them all. These
 	 * option names, their slug-keyed array shapes, and the
-	 * pattonwebz_signed_releases_{mode,revocation_mode,verified,failure}
-	 * hook signatures are frozen: changing any of them within a major
-	 * version breaks co-installed plugins running another copy. The same
-	 * applies to RevocationList::OPTION_REVOCATIONS and its shape. See
-	 * README.
+	 * srcl/mode, srcl/revocation_mode, srcl/verified, srcl/failure and
+	 * srcl/mode_switched hook names and signatures are frozen: changing any of
+	 * them within a major version breaks co-installed plugins running another
+	 * copy. The same applies to RevocationList::OPTION_REVOCATIONS and its
+	 * shape. See README.
 	 */
-	public const OPTION_FAILURES = 'pattonwebz_signed_releases_failures';
+	public const OPTION_FAILURES = 'srcl_failures';
 
 	/** Highest signed version verified per slug — the downgrade ratchet. */
-	public const OPTION_SEEN = 'pattonwebz_signed_releases_seen';
+	public const OPTION_SEEN = 'srcl_seen';
 
 	/**
 	 * Last effective (post-filter) verification mode per slug. A runtime
@@ -61,7 +61,7 @@ final class UpdaterGuard {
 	 * never change silently — this is how the guard notices a flip and
 	 * says so (see recordModeSwitch()).
 	 */
-	public const OPTION_MODE_SEEN = 'pattonwebz_signed_releases_mode_seen';
+	public const OPTION_MODE_SEEN = 'srcl_mode_seen';
 
 	/** A .minisig is well under 1 KB; anything bigger is not a signature. */
 	private const MAX_SIGNATURE_BYTES = 8192;
@@ -73,7 +73,7 @@ final class UpdaterGuard {
 	private const MAX_MANIFEST_BYTES = 16384;
 
 	/** The envelope format the manifest endpoint serves. */
-	private const MANIFEST_ENVELOPE_FORMAT = 'pattonwebz-revocation-envelope-v1';
+	private const MANIFEST_ENVELOPE_FORMAT = 'srcl-revocation-envelope-v1';
 
 	/** Plugin basename, e.g. "my-plugin/my-plugin.php". */
 	private string $pluginFile;
@@ -314,10 +314,10 @@ final class UpdaterGuard {
 					}
 
 					return new \WP_Error(
-						'pattonwebz_signed_releases_misconfigured',
+						'srcl/misconfigured',
 						sprintf(
 							/* translators: %s: underlying configuration error message */
-							__( 'Update blocked: the release-signature verifier is misconfigured (%s). Fix the configuration, then retry the update.', 'pattonwebz-signed-releases' ),
+							__( 'Update blocked: the release-signature verifier is misconfigured (%s). Fix the configuration, then retry the update.', 'signed-releases-client' ),
 							$e->getMessage()
 						)
 					);
@@ -337,7 +337,7 @@ final class UpdaterGuard {
 
 					printf(
 						'<div class="notice notice-error"><p><strong>%s</strong> %s</p></div>',
-						esc_html__( 'Signed Releases verification misconfigured:', 'pattonwebz-signed-releases' ),
+						esc_html__( 'Signed Releases verification misconfigured:', 'signed-releases-client' ),
 						esc_html( $e->getMessage() )
 					);
 				}
@@ -346,7 +346,7 @@ final class UpdaterGuard {
 
 		if ( function_exists( 'error_log' ) ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- deliberate: this is the one path where hooking a logger callable isn't available (construction never completed).
-			error_log( 'pattonwebz/signed-releases-client-for-edd: UpdaterGuard::register() failed: ' . $e->getMessage() );
+			error_log( 'signed-releases-client-for-edd: UpdaterGuard::register() failed: ' . $e->getMessage() );
 		}
 	}
 
@@ -379,7 +379,7 @@ final class UpdaterGuard {
 	 * recorded, logged, and announced (see recordModeSwitch()).
 	 */
 	private function resolveRuntimePolicy(): VerificationPolicy {
-		$mode = apply_filters( 'pattonwebz_signed_releases_mode', $this->policy->mode(), $this->slug );
+		$mode = apply_filters( 'srcl/mode', $this->policy->mode(), $this->slug );
 
 		try {
 			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
@@ -390,7 +390,7 @@ final class UpdaterGuard {
 				$this->logger,
 				'warning',
 				sprintf(
-					'[signed-releases] %s: pattonwebz_signed_releases_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					'[signed-releases] %s: srcl/mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
 					$this->slug,
 					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
 					$this->policy->mode()
@@ -408,7 +408,7 @@ final class UpdaterGuard {
 	 * the steady state (effective matches configured, nothing stored yet)
 	 * is not a switchover and stays quiet; everything else — an override
 	 * appearing, changing, or going away — logs and fires the
-	 * pattonwebz_signed_releases_mode_switched action. An active override
+	 * srcl/mode_switched action. An active override
 	 * logs at warning severity, a return to the configured mode at info.
 	 *
 	 * @param string $effective The post-filter mode actually in effect.
@@ -447,13 +447,13 @@ final class UpdaterGuard {
 			$effective === $configured ? 'info' : 'warning',
 			null === $previous
 				? sprintf(
-					'[signed-releases] %s: runtime mode override active: effective verification mode is "%s", configured mode is "%s" (pattonwebz_signed_releases_mode filter).',
+					'[signed-releases] %s: runtime mode override active: effective verification mode is "%s", configured mode is "%s" (srcl/mode filter).',
 					$this->slug,
 					$effective,
 					$configured
 				)
 				: sprintf(
-					'[signed-releases] %s: effective verification mode switched from "%s" to "%s" (configured mode "%s", pattonwebz_signed_releases_mode filter).',
+					'[signed-releases] %s: effective verification mode switched from "%s" to "%s" (configured mode "%s", srcl/mode filter).',
 					$this->slug,
 					$previous,
 					$effective,
@@ -461,7 +461,7 @@ final class UpdaterGuard {
 				)
 		);
 
-		do_action( 'pattonwebz_signed_releases_mode_switched', $this->slug, $previous, $effective, $configured );
+		do_action( 'srcl/mode_switched', $this->slug, $previous, $effective, $configured );
 	}
 
 	/**
@@ -522,8 +522,8 @@ final class UpdaterGuard {
 			);
 
 			return new \WP_Error(
-				'pattonwebz_signed_releases_no_floor',
-				__( 'Update blocked: signature enforcement is on but the installed version was not supplied, so there is no downgrade floor. Pass current_version to the verifier.', 'pattonwebz-signed-releases' )
+				'srcl/no_floor',
+				__( 'Update blocked: signature enforcement is on but the installed version was not supplied, so there is no downgrade floor. Pass current_version to the verifier.', 'signed-releases-client' )
 			);
 		}
 
@@ -604,7 +604,7 @@ final class UpdaterGuard {
 		 * @param TrustedComment $comment
 		 * @param string         $file
 		 */
-		do_action( 'pattonwebz_signed_releases_verified', $this->slug, $comment, $file );
+		do_action( 'srcl/verified', $this->slug, $comment, $file );
 
 		return $file;
 	}
@@ -732,7 +732,7 @@ final class UpdaterGuard {
 			return; // No pinned root — the feature does not exist for this guard.
 		}
 
-		$mode = apply_filters( 'pattonwebz_signed_releases_revocation_mode', $this->revocationPolicy->mode(), $this->slug );
+		$mode = apply_filters( 'srcl/revocation_mode', $this->revocationPolicy->mode(), $this->slug );
 
 		try {
 			$policy = new VerificationPolicy( is_string( $mode ) ? $mode : '' );
@@ -743,7 +743,7 @@ final class UpdaterGuard {
 				$this->logger,
 				'warning',
 				sprintf(
-					'[signed-releases] %s: pattonwebz_signed_releases_revocation_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
+					'[signed-releases] %s: srcl/revocation_mode filter returned an invalid mode (%s); falling back to the configured mode (%s).',
 					$this->slug,
 					is_scalar( $mode ) ? (string) $mode : gettype( $mode ),
 					$this->revocationPolicy->mode()
@@ -993,7 +993,7 @@ final class UpdaterGuard {
 		 * @param string                $package
 		 * @param bool                  $blocked
 		 */
-		do_action( 'pattonwebz_signed_releases_failure', $this->slug, $e, $package, $policy->shouldBlock() );
+		do_action( 'srcl/failure', $this->slug, $e, $package, $policy->shouldBlock() );
 
 		if ( ! $policy->shouldBlock() ) {
 			return $file; // Log-only rollout phase: allow the install.
@@ -1002,11 +1002,12 @@ final class UpdaterGuard {
 		// Only remove a file we downloaded ourselves; a path handed to us by
 		// another callback is not ours to delete.
 		if ( $owned ) {
+			// phpcs:ignore Generic.PHP.NoSilencedErrors.Forbidden, WordPress.PHP.NoSilencedErrors.Discouraged, WordPressVIPMinimum.Functions.RestrictedFunctions.file_ops_unlink -- Best-effort cleanup of a file we downloaded ourselves. A failure leaves the file in the temp directory and must not raise a second error while an update is already being blocked. The return value is intentionally not acted on, hence the suppression.
 			@unlink( $file );
 		}
 
 		return new \WP_Error(
-			'signed_releases_verification_failed',
+			'srcl/verification_failed',
 			sprintf(
 				/* translators: 1: plugin slug, 2: failure detail. */
 				'Update for "%1$s" was blocked: the package failed cryptographic signature verification (%2$s). The currently installed version has not been changed. Please contact support.',
@@ -1106,6 +1107,7 @@ final class UpdaterGuard {
 		$response = wp_safe_remote_get(
 			add_query_arg( $args, $this->storeUrl ),
 			array(
+				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Deliberately longer than VIP's 5s guidance: this fetch decides whether an update is permitted, so a short timeout on a slow store turns into a false missing_signature and blocks a legitimate update in enforce mode. A small JSON manifest does not need 15s of bandwidth, but it may need more than 5s of patience.
 				'timeout'             => 15,
 				'limit_response_size' => self::MAX_SIGNATURE_BYTES,
 			)
@@ -1127,6 +1129,7 @@ final class UpdaterGuard {
 		$response = wp_safe_remote_get(
 			add_query_arg( array( 'edd_action' => 'get_revocation_manifest' ), $this->storeUrl ),
 			array(
+				// phpcs:ignore WordPressVIPMinimum.Performance.RemoteRequestTimeout.timeout_timeout -- Same reasoning as the signature fetch: a failed revocation fetch must not be indistinguishable from "no revocations published", so this errs on patience rather than VIP's 5s guidance.
 				'timeout'             => 15,
 				'limit_response_size' => self::MAX_MANIFEST_BYTES,
 			)
@@ -1154,6 +1157,7 @@ final class UpdaterGuard {
 	}
 
 	private function defaultLogger( string $level, string $message ): void {
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- This is the injectable default logger, used only when the consumer passes no logger callable. error_log() is the sane zero-dependency fallback; it is not stray debug code. "$level" is unused because error_log() has no severity parameter.
 		error_log( $message );
 	}
 }

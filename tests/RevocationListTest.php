@@ -25,7 +25,7 @@ final class RevocationListTest extends TestCase {
 		return RevocationManifest::fromJson(
 			json_encode(
 				array(
-					'format'         => 'pattonwebz-revocation-v1',
+					'format'         => 'srcl-revocation-v1',
 					'sequence'       => $sequence,
 					'revoked_keys'   => array_map( $entry, $revoked ),
 					'unrevoked_keys' => array_map( $entry, $unrevoked ),

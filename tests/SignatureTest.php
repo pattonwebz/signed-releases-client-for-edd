@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 final class SignatureTest extends TestCase {
 
 	private function fixtureText(): string {
-		return file_get_contents( PATTONWEBZ_TEST_FIXTURES . '/sample-plugin-1.2.3.zip.minisig' );
+		return file_get_contents( SRCL_TEST_FIXTURES . '/sample-plugin-1.2.3.zip.minisig' );
 	}
 
 	/** Fixture split into lines for surgical corruption. */
@@ -49,7 +49,7 @@ final class SignatureTest extends TestCase {
 
 	public function testKeyIdMatchesSigningKey(): void {
 		$pub = \PattonWebz\SignedReleases\PublicKey::fromFileText(
-			file_get_contents( PATTONWEBZ_TEST_FIXTURES . '/testkey.pub' )
+			file_get_contents( SRCL_TEST_FIXTURES . '/testkey.pub' )
 		);
 		$sig = Signature::fromMinisigText( $this->fixtureText() );
 
